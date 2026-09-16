@@ -3,8 +3,8 @@
     "command": "npx",
     "args": ["-y", "@cyanheads/noaa-climate-mcp-server"],
     "env": {
-      "NOAA_CDO_TOKEN": "your-noaa-climate-token",
       "MCP_TRANSPORT_TYPE": "stdio"
-    }
+    },
+    "env_vars": ["NOAA_CDO_TOKEN"]
   }
 }
