@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.6.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.6.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -27,9 +27,11 @@
 
 ---
 
-## Tools
+## Overview
 
-10 tools — 8 over the NOAA Climate Data Online (CDO) API v2, plus two over separate NCEI bulk-CSV corpora: severe-weather event search over the Storm Events Database, and disaster costs over Billion-Dollar Weather and Climate Disasters:
+NOAA Climate Data Online (CDO) API v2 for historical weather observations, plus two separate NCEI bulk-CSV corpora — the Storm Events Database and Billion-Dollar Weather and Climate Disasters. Search locations and stations, fetch historical observations with date-range validation and unit conversion, and query severe-weather events or disaster costs from any MCP client. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+
+### Tools
 
 | Tool | Description |
 |:---|:---|
@@ -44,158 +46,156 @@
 | `noaa_climate_search_storm_events` | Search the NCEI Storm Events Database for one year — tornadoes, hail, floods, hurricanes, with damage, casualties, and narratives |
 | `noaa_climate_get_billion_dollar_disasters` | Query NOAA's Billion-Dollar Weather and Climate Disasters — CPI-adjusted costs and deaths per disaster, or per-year totals by disaster class |
 
-### `noaa_climate_list_datasets`
+### Resources
 
-List all available NOAA CDO datasets — approximately 11 in total.
+| Resource | Description |
+|:---|:---|
+| `noaa://datasets` | All CDO datasets with IDs and temporal coverage — injectable context for orienting an agent before querying data |
+| `noaa://stations/{stationId}` | Station metadata by ID — name, coordinates, elevation, and data coverage date range |
 
-- Returns dataset IDs, names, data coverage fraction, and temporal range
-- No required parameters — returns everything by default
-- Optionally filter by data type, location, station, or date range
-- Common datasets: GHCND (daily, 1763–present), GSOM (monthly), GSOY (annual), NORMAL_DLY/MLY/ANN/HLY (1981–2010 climate normals)
-- Start here to orient before calling `noaa_climate_fetch_data`
+## Capability reference
+
+### `noaa_climate_list_datasets` <sub>tool</sub>
+
+- No required parameters — returns all ~11 CDO datasets by default; optional filters by data type, location, station, or date range
+- Paginated (`limit` 1–1000, default 25; `offset`), sortable by `id`, `name`, `mindate`, `maxdate`, or `datacoverage`
+- Common IDs: GHCND (daily, 1763–present), GSOM (monthly), GSOY (annual), NORMAL_DLY/MLY/ANN/HLY (1981–2010 normals)
 
 ---
 
-### `noaa_climate_list_data_categories`
+### `noaa_climate_list_data_categories` <sub>tool</sub>
 
-List data category groups that organize related measurement types.
-
-- ~41 categories including Temperature, Precipitation, Wind, Pressure, Sunshine, Sky cover, Weather Type
-- Optionally filter by dataset, location, station, or date range
+- 42 categories total (Temperature, Precipitation, Wind, Pressure, Sunshine, Sky cover, Weather Type, and more)
+- Optional filters by dataset, location, station, or date range; paginated (`limit` 1–1000, default 25; `offset`), sortable by `id` or `name`
 - Use before `noaa_climate_list_data_types` to narrow by measurement domain
 
 ---
 
-### `noaa_climate_list_data_types`
+### `noaa_climate_list_data_types` <sub>tool</sub>
 
-List specific measurement labels for a dataset or category.
-
-- Hundreds of data types across all datasets
-- Filter by dataset (e.g., `GHCND`) or category (e.g., `TEMP`) to narrow results
-- Common GHCND types: `TMAX` (max temperature), `TMIN` (min temperature), `PRCP` (precipitation), `SNOW` (snowfall), `SNWD` (snow depth), `AWND` (average wind speed)
-- Returns ID, name, coverage fraction, and date range per type
+- Filter by `datasetId` (e.g. `GHCND`) or `datacategoryId` (e.g. `TEMP`) — hundreds of types exist across all datasets
+- Common GHCND types: `TMAX`, `TMIN`, `PRCP`, `SNOW`, `SNWD`, `AWND`
+- Coverage fraction and date range are included only when the upstream record carries them
+- Paginated (`limit` 1–1000, default 25; `offset`)
 
 ---
 
-### `noaa_climate_list_location_categories`
+### `noaa_climate_list_location_categories` <sub>tool</sub>
 
-List the location categories that scope `noaa_climate_find_locations` — 12 in total.
-
-- Returns category IDs (`CITY`, `ST`, `CNTY`, `CNTRY`, `ZIP`, `US_TERR`, `CLIM_REG`, `CLIM_DIV`, `HYD_ACC`, `HYD_CAT`, `HYD_REG`, `HYD_SUB`) and their names
-- Call it when you do not know which `locationCategoryId` to pass
-- Pagination and sort only — the CDO endpoint ignores dataset, location, station, and date filters, so none are offered
+- Returns the 12 category IDs `noaa_climate_find_locations` accepts as `locationCategoryId`: `CITY`, `ST`, `CNTY`, `CNTRY`, `ZIP`, `US_TERR`, `CLIM_REG`, `CLIM_DIV`, `HYD_ACC`, `HYD_CAT`, `HYD_REG`, `HYD_SUB`
+- Sortable by `id` or `name`; paginated (`limit` 1–1000, default 25; `offset`)
+- Pagination and sort only — CDO ignores dataset, location, station, and date filters on this endpoint, so none are offered
 
 ---
 
-### `noaa_climate_find_locations`
+### `noaa_climate_find_locations` <sub>tool</sub>
 
-Search geographic locations by category.
-
-- Category types: `ST` (US states, 51), `CNTY` (counties), `CITY` (cities), `CNTRY` (countries), `ZIP` (zip codes), `US_TERR` (US territories), `CLIM_REG` (NOAA climate regions), `CLIM_DIV` (climate divisions), hydrological categories — `noaa_climate_list_location_categories` returns the authoritative set
-- Use `locationCategoryId=ST` to list all states in one call
-- `nameContains` gives the name search the CDO API lacks: the server enumerates the requested category and matches the substring case-insensitively, so `locationCategoryId=CITY` with `nameContains=seattle` resolves a city in one call. It is a size rule, not a category list — the category must hold at most 4,000 locations, which is every category but `ZIP` (30,415), and a `datasetId` or `datacategoryId` filter can bring a larger one back under the limit. Past it, page alphabetically with `sortField=name`
-- Returns location IDs (`FIPS:37`, `CITY:US530018`, `ZIP:98101`) used in station search and data queries
+- `locationCategoryId` scopes the search (e.g. `ST` returns all 51 states in one call); omit it to return every location type
+- `nameContains` synthesizes the name search CDO lacks by enumerating the category client-side and matching the substring case-insensitively — capped to categories of at most 4,000 locations (every category but `ZIP`, 30,415); a `datasetId`/`datacategoryId` filter can narrow a larger category under that limit
+- Returns location IDs used by `noaa_climate_find_stations` and `noaa_climate_fetch_data` — `FIPS:37`, `CITY:US530018`, `ZIP:98101`
+- Typed failures when `nameContains` is passed without `locationCategoryId`, or the resolved category is too large to enumerate
+- Paginated (`limit` 1–1000, default 25; `offset`); sort alphabetically by `name` to page through an over-large category instead
 
 ---
 
-### `noaa_climate_find_stations`
+### `noaa_climate_find_stations` <sub>tool</sub>
 
-Search weather observation stations.
-
-- Filter by location ID, bounding box (lat/lon), dataset, data type, and date range
-- Returns station IDs, names, coordinates, elevation, and data coverage dates
-- A station must have data for the dataset and date range you want — pass `datasetId` and date range to ensure compatibility
+- Filter by `locationId`, `extent` (lat/lon bounding box), `datasetId`, `datatypeId` (array), and date range
+- Returns station IDs, names, coordinates, elevation, and data-coverage dates — station IDs feed `noaa_climate_fetch_data` as `stationId`
+- Pair `datasetId` and date range to confirm a returned station actually has data for what you plan to query
 - Common station ID formats: `GHCND:USW00024233`, `COOP:010008`
-- Station IDs returned here feed directly into `noaa_climate_fetch_data`
+- Paginated (`limit` 1–1000, default 25; `offset`)
 
 ---
 
-### `noaa_climate_get_station`
+### `noaa_climate_get_station` <sub>tool</sub>
 
-Fetch full metadata for a single weather station by ID.
-
-- Returns name, coordinates (decimal degrees), elevation, and full data coverage date range
-- Use to verify a station before querying data, or to check its temporal coverage
-- Mirrors the `noaa://stations/{stationId}` resource as a direct lookup
-
----
-
-### `noaa_climate_fetch_data`
-
-Fetch historical observation records from a NOAA CDO dataset.
-
-- Requires `datasetId`, `startDate`, and `endDate`; optionally scoped by station, location, and data type
-- **Date range limits:** sub-daily, daily, and radar datasets (GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3) — 1 year max per request; monthly and annual datasets (GSOM, GSOY, NORMAL_MLY, NORMAL_ANN) — 10 years max
-- **Unit selection:** strongly recommended — pass `units=metric` (SI) or `units=standard` (Fahrenheit/inches). Without it, GHCND values are raw tenths-of-unit integers (TMAX=256 = 25.6°C, PRCP=12 = 1.2mm); GSOM/GSOY are already scaled
-- **Climate normals:** for any NORMAL_* dataset, use `startDate=2010-01-01` and `endDate=2010-12-31` — that is the API proxy year regardless of which 30-year period is described
-- Returns flat tuples of `{ date, datatype, station, value, attributes }` with pagination metadata
+- Single required input: `stationId`
+- Returns name, coordinates, elevation, and full data-coverage date range
+- Mirrors the `noaa://stations/{stationId}` resource as a direct call
+- `not_found` when the ID is well-formed but resolves to nothing
 
 ---
 
-### `noaa_climate_search_storm_events`
+### `noaa_climate_fetch_data` <sub>tool</sub>
 
-Search the NCEI Storm Events Database — a different NOAA corpus from the CDO tools above.
-
-- Discrete severe-weather events (tornado, hail, flood, hurricane, winter storm, heat, and every other NWS Storm Data type) rather than station observations, back to 1950
-- Returns event type, state and county/zone, begin and end times, magnitude, tornado F/EF scale with track length and width, direct and indirect deaths and injuries, property and crop damage, and the episode and event narratives
-- **No token required** — this corpus is published as bulk CSV, not through CDO, so `NOAA_CDO_TOKEN` is irrelevant to this tool
-- **`year` is required.** NCEI publishes one gzip file per year (~12 MB, ~70k events for a recent year), so an unscoped search would download every year back to 1950
-- **`state` takes the full name NCEI writes** — `"FLORIDA"`, not `"FL"`. `eventType` is matched case-insensitively against the exact NWS label (`"Tornado"`, `"Flash Flood"`, `"Hurricane (Typhoon)"`); a miss comes back with the labels that year actually contains
-- **Damage is honest about what NCEI reported.** Values arrive as magnitude-suffixed strings (`"75.00K"`, `"1.20M"`, `"1.00B"`) and are returned as both the raw cell and a parsed dollar amount. An unreported figure — about a fifth of a recent year — is omitted entirely rather than reported as `0`, so it can never be read as confirmed zero damage. `minDamageInUsd` therefore excludes those rows and reports how many it dropped
-- **Filenames are discovered, never constructed.** Each year's file carries a publish-date suffix that changes when NCEI republishes it, so the tool reads the directory index every time its cache lapses
-- The server caches two years of compressed bytes for six hours — under 30 MB, since a bundle runs 12 MB for a recent year and 15 MB for the largest (2011). Each search streams the decompression, so the ~70 MB decompressed form is never materialized. That bounds what is *retained*, not peak memory: the transient chunks still cost headroom, and a cold full-year 2024 scan measured 129 MB RSS at baseline against a 269 MB peak
+- Requires `datasetId`, `startDate`, `endDate`; optional `stationId`, `locationId`, `datatypeId` filters (arrays)
+- Date-range cap depends on dataset: GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3 allow 1 year max; GSOM, GSOY, NORMAL_MLY, NORMAL_ANN allow 10 years max, measured to the end of the calendar month that many years after `startDate`
+- `units: "metric"` or `"standard"` is strongly recommended — without it, GHCND values are raw tenths-of-unit integers (e.g. `TMAX=256` is 25.6°C)
+- For any `NORMAL_*` dataset, use `startDate=2010-01-01` / `endDate=2010-12-31` — the fixed API proxy year regardless of which 30-year period is described
+- `date_range_exceeded` reports the exact `maxEndDate` CDO will accept; an unrecognized `datasetId` fails `validation_error` before any network call
+- Returns flat `{ date, datatype, station, value, attributes }` tuples plus an `effectiveQuery` echo of the applied filters
 
 ---
 
-### `noaa_climate_get_billion_dollar_disasters`
+### `noaa_climate_search_storm_events` <sub>tool</sub>
 
-Query NOAA/NCEI's [Billion-Dollar Weather and Climate Disasters](https://www.ncei.noaa.gov/access/billions/) — the curated record of US weather and climate disasters whose damage passed $1 billion.
-
-- Two shapes from one tool: individual disasters by default (name, class, span, CPI-adjusted and unadjusted cost, deaths), or `summary=true` for per-year counts and costs by disaster class plus an `All Disasters` total
-- Seven disaster classes, written exactly as NCEI writes them: `Drought`, `Flooding`, `Freeze`, `Severe Storm`, `Tropical Cyclone`, `Wildfire`, `Winter Storm`. `disasterType` rejects any other spelling rather than coercing it
-- **No token required** — this corpus is published as static CSV, not through CDO
-- **Every cost is in whole US dollars.** NCEI does not use one unit across these exports: the per-event file states millions, the national per-year file states billions, and a per-state per-year file states millions again. The server reads the unit each file declares in its own preamble, converts once, and reports what it read back as `declaredCostUnit`. Conflating the two would misreport by a factor of 1,000 while still looking plausible — Hurricane Helene is `78721` in a millions file, which is $78.7 billion, not $78,721 billion
-- **Coverage is whatever NCEI has finished assessing**, not the current calendar year — `coveredYears` reports the span actually present (1980–2024 as of writing). A query for this year returns nothing rather than an error
-- `startYear`/`endYear` match by overlap, so a disaster running across a New Year is returned from either side of it
-- **A `state` scope reads NCEI's per-state exports and behaves differently in two ways.** Its per-event rows are national disasters that reached that state and carry the **national** cost, never a state share — summing states double-counts, which the response says for itself with `costBasis: "national"`. Its per-year rows carry a binned cost range (`costRangeInUsd`) instead of the point estimate and 75/90/95% confidence bands the national export publishes
-- Not every two-letter code has an export: the 50 states, DC, PR, VI, and GU do; AS and MP do not, and a code without one fails with `unknown_state` rather than silently falling back to national totals
+- Separate NCEI bulk-CSV corpus — no token required; `year` is required (1950 through the current partial year, one file per year)
+- Filter by `state` (the full NCEI name, e.g. `"FLORIDA"`, never a postal code), `eventType` (matched case-insensitively against the exact NWS label), `month`, and `minDamageInUsd`
+- Damage arrives as both the raw magnitude-suffixed string (`"1.20M"`) and a parsed dollar amount; an unreported figure is omitted rather than reported as zero, and `minDamageInUsd` excludes those rows and reports how many it dropped
+- `limit` 1–100 (default 50) with `offset`; a zero-match response names the event types and states the requested year actually contains
+- `year_unavailable` when NCEI has no file for the year; `malformed_export` if a downloaded file fails to decompress into the expected table
 
 ---
 
-## Resources
+### `noaa_climate_get_billion_dollar_disasters` <sub>tool</sub>
 
-| Type | Name | Description |
-|:---|:---|:---|
-| Resource | `noaa://datasets` | All CDO datasets with IDs and temporal coverage — injectable context for orienting an agent before querying data |
-| Resource | `noaa://stations/{stationId}` | Station metadata by ID — name, coordinates, elevation, and data coverage date range |
+- Two shapes: individual disasters by default, or `summary=true` for per-year counts and costs by disaster class plus an "All Disasters" total
+- Every cost is normalized to whole US dollars regardless of the unit NCEI declares per export (millions for the per-event file, billions for the national per-year file); the response echoes the source unit as `declaredCostUnit`
+- Filter by `startYear`/`endYear` (overlap match), `disasterType` (one of seven exact NCEI classes), `minCostInUsd`, and `state` (two-letter postal code)
+- A `state` scope reports each disaster's national cost, not a state share (`costBasis: "national"`), and its per-year rows carry a binned `costRangeInUsd` instead of a point estimate and confidence bands
+- Coverage runs 1980 through the last year NCEI has finished assessing (`coveredYears`), not the current calendar year; `limit` 1–100 (default 50) with `offset`
+
+---
+
+### `noaa://datasets` <sub>resource</sub>
+
+- All CDO datasets as `application/json` — IDs, names, temporal coverage
+- Equivalent to `noaa_climate_list_datasets` with no filters and a high limit — injectable, zero-fetch context
+
+---
+
+### `noaa://stations/{stationId}` <sub>resource</sub>
+
+- Station metadata by ID — mirrors `noaa_climate_get_station`
+- `stationId` comes from `noaa_climate_find_stations`
+- `not_found` when the ID is well-formed but resolves to nothing
 
 ## Features
 
-Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core):
+Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): stdio and Streamable HTTP transports, pluggable auth (`none` / `jwt` / `oauth`), swappable storage (`in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`), structured logging with optional OpenTelemetry tracing.
 
-- Declarative tool definitions — single file per tool, framework handles registration and validation
-- Unified error handling across all tools
-- Pluggable auth (`none`, `jwt`, `oauth`)
-- Swappable storage backends: `in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`
-- Structured logging with optional OpenTelemetry tracing
-- Runs locally (stdio/HTTP) or on Cloudflare Workers from the same codebase
+NOAA-specific:
 
-NOAA CDO-specific:
-
-- Full CDO API v2 coverage — datasets, data categories, data types, locations, stations, and observations
-- Client-side date range validation with per-dataset limits enforced before hitting the API
-- Unit normalization via the CDO `units` parameter — avoids raw tenths-of-unit integer confusion
-- CDO's own rejection message is recovered and surfaced: an over-long date range, a malformed date, a missing parameter, and an over-large `limit` each report the reason CDO gave, instead of an identical bare status line
-- Retry with exponential backoff for transient API failures
+- Full CDO API v2 coverage — datasets, data categories, data types, locations, stations, and observations — plus two separate NCEI bulk-CSV corpora requiring no token: severe-weather events (Storm Events Database) and billion-dollar disaster costs
+- Client-side date-range validation enforced per dataset before hitting the API, reporting the exact upstream limit back to the caller
+- Unit normalization via CDO's `units` parameter avoids raw tenths-of-unit integer confusion
+- CDO's own rejection message is recovered and surfaced — an over-long date range, malformed date, missing parameter, or over-large `limit` reports the reason CDO gave instead of a bare status line
+- Billion-Dollar Disasters costs are converted to whole US dollars from whichever unit each NCEI export declares in its own preamble, since the unit differs by export
 
 Agent-friendly output:
 
-- Paginated results across all list and search tools — `limit`, `offset`, and total count in every response
-- Station and dataset IDs flow naturally between tools — find a location, find stations in it, fetch data from those stations
-- Structured error contracts with `reason` codes and recovery hints — agents can branch on data, not string parsing
-- Dataset and station resources for injectable, zero-fetch context
+- Paginated results across every list and search tool — `limit`, `offset`, and total count in every response
+- Station, location, and dataset IDs flow naturally between tools — find a location, find stations in it, fetch data from those stations
+- Structured error contracts with typed `reason` codes and recovery hints — agents branch on data, not string parsing
+- Damage and cost fields are honest about upstream gaps — an unreported NCEI figure is omitted rather than reported as a confirmed zero
 
 ## Getting started
+
+### Public Hosted Instance
+
+A public instance is available at `https://noaa-climate.caseyjhand.com/mcp` — no installation required. Point any MCP client at it via Streamable HTTP:
+
+```json
+{
+  "mcpServers": {
+    "noaa-climate-mcp-server": {
+      "type": "streamable-http",
+      "url": "https://noaa-climate.caseyjhand.com/mcp"
+    }
+  }
+}
+```
 
 ### Self-Hosted / Local
 
@@ -260,7 +260,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 NOAA_CDO_TOKEN=your-token-here bun ru
 
 ### Prerequisites
 
-- [Bun v1.3.0](https://bun.sh/) or higher (or Node.js ≥24.0.0).
+- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js ≥24.0.0).
 - A free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) — required for all requests.
 
 ### Installation
@@ -283,6 +283,13 @@ cd noaa-climate-mcp-server
 bun install
 ```
 
+4. **Configure environment:**
+
+```sh
+cp .env.example .env
+# edit .env and set required vars
+```
+
 ## Configuration
 
 All configuration is validated at startup via Zod schemas in `src/config/server-config.ts`. Key environment variables:
@@ -293,12 +300,15 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http` | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port | `3010` |
 | `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path where the MCP server is mounted | `/mcp` |
+| `MCP_SESSION_MODE` | HTTP session posture: `stateful`, `stateless`, or `auto`. Ships as `stateless` — no tool asks the caller for input mid-handler | `stateless` |
 | `MCP_PUBLIC_URL` | Public origin override for TLS-terminating reverse-proxy deployments | none |
 | `MCP_AUTH_MODE` | Authentication: `none`, `jwt`, or `oauth` | `none` |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warning`, `error`, etc.) | `info` |
 | `MCP_GC_PRESSURE_INTERVAL_MS` | Opt-in Bun-only forced-GC pressure loop (ms). Try `60000` if heap growth is observed under sustained HTTP load. | `0` (disabled) |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1` | `in-memory` |
 | `OTEL_ENABLED` | Enable OpenTelemetry | `false` |
+
+See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ## Running the server
 
@@ -322,6 +332,15 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
   bun run test      # Runs the test suite
   bun run test:live # Opt-in: resolves every documented example identifier against the live CDO API
   ```
+
+### Docker
+
+```sh
+docker build -t noaa-climate-mcp-server .
+docker run --rm -e NOAA_CDO_TOKEN=your-token-here -p 3010:3010 noaa-climate-mcp-server
+```
+
+The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `/var/log/noaa-climate-mcp-server`. OpenTelemetry peer dependencies are installed by default — build with `--build-arg OTEL_ENABLED=false` to omit them.
 
 ## Project structure
 
@@ -347,7 +366,7 @@ See [`CLAUDE.md`](./CLAUDE.md) for development guidelines and architectural rule
 
 ## Contributing
 
-Issues and pull requests are welcome. Run checks and tests before submitting:
+Issues are welcome. Run checks and tests before submitting:
 
 ```sh
 bun run devcheck

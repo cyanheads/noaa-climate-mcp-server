@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.6.3](changelog/0.6.x/0.6.3.md) — 2026-09-16
+
+Adopts mcp-ts-core 0.13.2 — strict argument-rejection responses, CDO 500 retry-with-backoff, explicit SIGTERM/SIGINT exit, and session mode declared in source; fixes plugin manifests that shipped a placeholder NOAA_CDO_TOKEN.
+
 ## [0.6.2](changelog/0.6.x/0.6.2.md) — 2026-08-24
 
 Adopts MCP SDK v2 with protocol revision 2026-07-28 support and strict tool-wire contracts.

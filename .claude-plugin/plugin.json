@@ -1,19 +1,32 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "noaa-climate-mcp-server",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Search NOAA climate stations and datasets, fetch historical weather observations via MCP. STDIO or Streamable HTTP.",
   "author": {
-    "name": "cyanheads"
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
   },
   "homepage": "https://github.com/cyanheads/noaa-climate-mcp-server#readme",
   "repository": "https://github.com/cyanheads/noaa-climate-mcp-server",
   "license": "Apache-2.0",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "noaa", "climate", "weather", "cdo"],
+  "userConfig": {
+    "NOAA_CDO_TOKEN": {
+      "type": "string",
+      "title": "NOAA CDO API Token",
+      "description": "Free API token from the NOAA CDO web service. Register at https://www.ncdc.noaa.gov/cdo-web/token.",
+      "required": true,
+      "sensitive": true
+    }
+  },
   "mcpServers": {
     "noaa-climate-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/noaa-climate-mcp-server"],
       "env": {
-        "NOAA_CDO_TOKEN": "your-noaa-climate-token",
+        "NOAA_CDO_TOKEN": "${user_config.NOAA_CDO_TOKEN}",
         "MCP_TRANSPORT_TYPE": "stdio"
       }
     }
