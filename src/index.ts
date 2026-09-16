@@ -24,6 +24,7 @@ import { initStormEventsService } from './services/storm-events/storm-events-ser
 await createApp({
   name: 'noaa-climate-mcp-server',
   title: 'noaa-climate-mcp-server',
+  sessionMode: 'stateless',
   tools: [
     noaaClimateListDatasets,
     noaaClimateListDataCategories,
