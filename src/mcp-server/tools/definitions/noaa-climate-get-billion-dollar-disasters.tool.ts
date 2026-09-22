@@ -251,6 +251,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         when: 'The state code is well formed but NCEI publishes no export under it.',
         recovery:
           'Try another two-letter code or omit state entirely; the 50 states, DC, PR, VI, and GU have exports.',
+        thrownBy: 'service',
       },
       {
         reason: 'invalid_year_range',
@@ -264,6 +265,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         when: 'The export downloaded but is not the expected table — no header row, no rows, missing columns, or no declared cost unit.',
         recovery:
           'The NCEI export changed shape; retry without a state scope, and report the file named in the error if the national export fails too.',
+        thrownBy: 'service',
       },
     ],
 

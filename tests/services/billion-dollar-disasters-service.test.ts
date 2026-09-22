@@ -18,6 +18,7 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => {
   };
 });
 
+import { noaaClimateGetBillionDollarDisasters } from '@/mcp-server/tools/definitions/noaa-climate-get-billion-dollar-disasters.tool.js';
 import { BillionDollarDisastersService } from '@/services/billion-dollar-disasters/billion-dollar-disasters-service.js';
 import type {
   DisasterQuery,
@@ -502,6 +503,24 @@ describe('malformed exports', () => {
     await expect(service().searchEvents(query(), createMockContext())).rejects.toMatchObject({
       data: { reason: 'malformed_export' },
     });
+  });
+
+  it.each([
+    ['an unrecognized cost unit', EVENTS_US_CSV_DECLARING_UNKNOWN_UNIT],
+    ['a missing column', EVENTS_US_CSV_MISSING_COLUMN],
+    ['no rows', EVENTS_US_CSV_WITHOUT_ROWS],
+    ['no header row', 'not a csv at all\njust prose\n'],
+  ])('carries the declared malformed_export recovery hint for %s', async (_case, body) => {
+    serveExports({ 'events-US.csv': body });
+    const contract = noaaClimateGetBillionDollarDisasters.errors;
+    const declared = contract?.find((entry) => entry.reason === 'malformed_export')?.recovery;
+    const error = await rejection(
+      service().searchEvents(query(), createMockContext({ errors: contract })),
+    );
+
+    expect(error.data).toMatchObject({ reason: 'malformed_export' });
+    expect(declared).toBeDefined();
+    expect(error.data?.recovery).toEqual({ hint: declared });
   });
 });
 

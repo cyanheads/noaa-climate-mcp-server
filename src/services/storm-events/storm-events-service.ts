@@ -152,7 +152,7 @@ export class StormEventsService {
 
     await this.readRecords(bundle, ctx, (record) => {
       if (!columns) {
-        columns = indexHeader(record, sourceFile);
+        columns = indexHeader(record, sourceFile, ctx);
         return;
       }
       // A blank line parses to a single empty field; it is not a row.
@@ -195,6 +195,7 @@ export class StormEventsService {
       throw serializationError(`Storm Events file ${sourceFile} contained no rows.`, {
         reason: 'malformed_export',
         sourceFile,
+        ...ctx.recoveryFor('malformed_export'),
       });
     }
 
@@ -421,13 +422,13 @@ export class StormEventsService {
 }
 
 /** Map header names to column positions, failing loudly if the export changed shape. */
-function indexHeader(record: string[], sourceFile: string): Map<string, number> {
+function indexHeader(record: string[], sourceFile: string, ctx: Context): Map<string, number> {
   const columns = new Map(record.map((name, index) => [name.trim(), index] as const));
   const missing = REQUIRED_COLUMNS.filter((name) => !columns.has(name));
   if (missing.length > 0) {
     throw serializationError(
       `Storm Events file ${sourceFile} is missing expected columns: ${missing.join(', ')}.`,
-      { reason: 'malformed_export', sourceFile, missing },
+      { reason: 'malformed_export', sourceFile, missing, ...ctx.recoveryFor('malformed_export') },
     );
   }
   return columns;

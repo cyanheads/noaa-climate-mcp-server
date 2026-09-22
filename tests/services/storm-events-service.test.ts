@@ -296,6 +296,20 @@ describe('StormEventsService — parsing the gzip bundle', () => {
       service.search({ ...baseQuery, year: 2024 }, createMockContext()),
     ).rejects.toMatchObject({ data: { reason: 'malformed_export' } });
   });
+
+  it.each([
+    ['required columns are missing', 'COL_A,COL_B\r\n1,2\r\n'],
+    ['the file carries no rows', ''],
+  ])('carries the declared malformed_export recovery hint when %s', async (_case, body) => {
+    routeFetch({
+      [`${BASE}StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz`]: () => gzipResponse(body),
+    });
+    const service = new StormEventsService(BASE);
+    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+
+    expect(error.data).toMatchObject({ reason: 'malformed_export' });
+    expect(error.data?.recovery).toEqual({ hint: declaredRecovery('malformed_export') });
+  });
 });
 
 describe('StormEventsService — damage values', () => {

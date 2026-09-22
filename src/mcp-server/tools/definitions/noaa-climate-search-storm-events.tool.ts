@@ -264,6 +264,7 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       when: 'The NCEI directory listing has no details file for the requested year.',
       recovery:
         'Request a year inside the published range named in the error; the current year appears only after NCEI issues its first batch.',
+      thrownBy: 'service',
     },
     {
       reason: 'service_unavailable',
@@ -272,6 +273,7 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       retryable: true,
       recovery:
         'Wait a moment and retry the same year; the NCEI bulk file server may be temporarily unavailable.',
+      thrownBy: 'service',
     },
     {
       reason: 'malformed_export',
@@ -279,6 +281,7 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       when: 'The year decompressed but is not the expected table — required columns are missing, or the file carried no rows.',
       recovery:
         'The NCEI export changed shape; try another year, and report the file named in the error if every year fails.',
+      thrownBy: 'service',
     },
   ],
 
