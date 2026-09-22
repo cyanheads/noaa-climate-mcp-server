@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.6.4](changelog/0.6.x/0.6.4.md) — 2026-09-21
+
+Adopts mcp-ts-core 0.13.6 — schema-derived recovery hints and pre-validated argument keys on rejection, reason/retryable error-text terms — and forwards the malformed_export recovery hint from the storm-events and billion-dollar-disasters services.
+
 ## [0.6.3](changelog/0.6.x/0.6.3.md) — 2026-09-16
 
 Adopts mcp-ts-core 0.13.2 — strict argument-rejection responses, CDO 500 retry-with-backoff, explicit SIGTERM/SIGINT exit, and session mode declared in source; fixes plugin manifests that shipped a placeholder NOAA_CDO_TOKEN.
