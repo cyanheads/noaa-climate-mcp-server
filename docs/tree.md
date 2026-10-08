@@ -1,6 +1,6 @@
 # noaa-climate-mcp-server - Directory Structure
 
-Generated on: 2026-09-16 11:01:37
+Generated on: 2026-10-08 20:45:05
 
 ```text
 noaa-climate-mcp-server/
@@ -14,6 +14,8 @@ noaa-climate-mcp-server/
 │   │   ├── bug_report.yml
 │   │   ├── config.yml
 │   │   └── feature_request.yml
+│   ├── workflows/
+│   │   └── codeql.yml
 │   ├── CODE_OF_CONDUCT.md
 │   ├── CONTRIBUTING.md
 │   ├── FUNDING.yml
@@ -130,11 +132,12 @@ noaa-climate-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── prune-musl-packages.ts
 │   ├── release-github.ts
-│   ├── split-changelog.ts
 │   └── tree.ts
 ├── src/
 │   ├── config/
@@ -182,7 +185,9 @@ noaa-climate-mcp-server/
 │   │   └── billion-dollar-disasters.ts
 │   ├── helpers/
 │   │   ├── content.ts
-│   │   └── example-identifiers.ts
+│   │   ├── contract-failure.ts
+│   │   ├── example-identifiers.ts
+│   │   └── resource-failure.ts
 │   ├── live/
 │   │   └── example-identifiers.live.test.ts
 │   ├── prompts/
@@ -200,6 +205,7 @@ noaa-climate-mcp-server/
 │   │   ├── storm-events-damage.test.ts
 │   │   └── storm-events-service.test.ts
 │   ├── tools/
+│   │   ├── cdo-upstream-outage-contract.test.ts
 │   │   ├── cdo-upstream-rejection-routing.test.ts
 │   │   ├── date-wire-normalization.test.ts
 │   │   ├── example-identifier-extraction.test.ts

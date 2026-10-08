@@ -12,14 +12,14 @@
       "url": "https://noaa-climate.caseyjhand.com/mcp"
     }
   ],
-  "version": "0.6.4",
+  "version": "0.6.5",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/noaa-climate-mcp-server",
       "runtimeHint": "npx",
-      "version": "0.6.4",
+      "version": "0.6.5",
       "environmentVariables": [
         {
           "name": "NOAA_CDO_TOKEN",
@@ -44,7 +44,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/noaa-climate-mcp-server",
       "runtimeHint": "npx",
-      "version": "0.6.4",
+      "version": "0.6.5",
       "environmentVariables": [
         {
           "name": "MCP_TRANSPORT_TYPE",

@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.6.5](changelog/0.6.x/0.6.5.md) — 2026-10-08
+
+Adopts mcp-ts-core 0.13.14: numeric and boolean strings and a lone string for a list field are repaired before validation, tool errors carry a request ID, and network-failure messages name NOAA by origin only. The eight CDO tools throw upstream-outage reasons as literals, so the error-contract lint now covers them.
+
 ## [0.6.4](changelog/0.6.x/0.6.4.md) — 2026-09-21
 
 Adopts mcp-ts-core 0.13.6 — schema-derived recovery hints on argument rejections, case-style key aliasing and stringified-array repair before validation, reason/retryable error-text terms — and forwards the malformed_export recovery hint from the storm-events and billion-dollar-disasters services.
