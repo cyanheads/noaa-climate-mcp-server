@@ -11,13 +11,14 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaStationResource } from '@/mcp-server/resources/definitions/noaa-station.resource.js';
 import { noaaClimateFetchData } from '@/mcp-server/tools/definitions/noaa-climate-fetch-data.tool.js';
 import { noaaClimateFindStations } from '@/mcp-server/tools/definitions/noaa-climate-find-stations.tool.js';
 import { noaaClimateGetStation } from '@/mcp-server/tools/definitions/noaa-climate-get-station.tool.js';
 import { noaaClimateListDatasets } from '@/mcp-server/tools/definitions/noaa-climate-list-datasets.tool.js';
+import { contractFailure } from '../helpers/contract-failure.js';
+import { resourceFailure } from '../helpers/resource-failure.js';
 
 vi.mock('@/services/cdo/cdo-service.js', () => ({
   getCdoService: vi.fn(),
@@ -92,28 +93,18 @@ describe('example station ID', () => {
   });
 
   it('spells the same ID in the runtime not_found hint as in the declared contract', async () => {
-    const ctx = createMockContext({ errors: noaaClimateGetStation.errors });
-    const input = noaaClimateGetStation.input.parse({ stationId: 'GHCND:UNKNOWN0001' });
+    const failure = await contractFailure(noaaClimateGetStation, {
+      stationId: 'GHCND:UNKNOWN0001',
+    });
 
-    const err = await Promise.resolve(noaaClimateGetStation.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    );
-
-    const hint = (err as { data?: { recovery?: { hint?: string } } }).data?.recovery?.hint;
-    expect(hint).toContain(LIVE_STATION_ID);
+    expect(failure.data.recovery?.hint).toContain(LIVE_STATION_ID);
     const declared = noaaClimateGetStation.errors!.find((e) => e.reason === 'not_found')!.recovery;
     expect(declared).toContain(LIVE_STATION_ID);
   });
 
   it('spells the live ID in the station resource not_found hint', async () => {
-    const ctx = createMockContext({ errors: noaaStationResource.errors });
-    const params = noaaStationResource.params!.parse({ stationId: 'GHCND:UNKNOWN0001' });
+    const failure = await resourceFailure(noaaStationResource, 'noaa://stations/GHCND:UNKNOWN0001');
 
-    const err = await Promise.resolve(noaaStationResource.handler(params, ctx)).catch(
-      (e: unknown) => e,
-    );
-
-    const hint = (err as { data?: { recovery?: { hint?: string } } }).data?.recovery?.hint;
-    expect(hint).toContain(LIVE_STATION_ID);
+    expect(failure.data.recovery?.hint).toContain(LIVE_STATION_ID);
   });
 });
