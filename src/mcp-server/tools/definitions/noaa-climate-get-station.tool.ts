@@ -106,24 +106,16 @@ export const noaaClimateGetStation = tool('noaa_climate_get_station', {
       // next move the caller can take.
       if (err instanceof McpError) {
         const outage = upstreamOutageReason(err);
-        if (outage) throw ctx.fail(outage, err.message, ctx.recoveryFor(outage));
+        if (outage === 'rate_limited') throw ctx.fail('rate_limited', err.message);
+        if (outage === 'service_unavailable') throw ctx.fail('service_unavailable', err.message);
         if (err.code === JsonRpcErrorCode.InvalidParams && isUpstreamTokenRejection(err)) {
-          throw ctx.fail(
-            'upstream_auth_failed',
-            err.message,
-            ctx.recoveryFor('upstream_auth_failed'),
-          );
+          throw ctx.fail('upstream_auth_failed', err.message);
         }
       }
       throw err;
     }
 
-    if (!st.id)
-      throw ctx.fail(
-        'not_found',
-        `Station "${input.stationId}" not found.`,
-        ctx.recoveryFor('not_found'),
-      );
+    if (!st.id) throw ctx.fail('not_found', `Station "${input.stationId}" not found.`);
 
     return {
       id: st.id,

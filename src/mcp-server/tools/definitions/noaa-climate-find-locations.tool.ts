@@ -243,16 +243,11 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
           // throttled upstream is not a parameter fault, and its codes never
           // enter that branch anyway.
           const outage = upstreamOutageReason(err);
-          if (outage) throw ctx.fail(outage, err.message, ctx.recoveryFor(outage));
+          if (outage === 'rate_limited') throw ctx.fail('rate_limited', err.message);
+          if (outage === 'service_unavailable') throw ctx.fail('service_unavailable', err.message);
           if (err.code === JsonRpcErrorCode.InvalidParams) {
-            if (isUpstreamTokenRejection(err)) {
-              throw ctx.fail(
-                'upstream_auth_failed',
-                err.message,
-                ctx.recoveryFor('upstream_auth_failed'),
-              );
-            }
-            throw ctx.fail('validation_error', err.message, ctx.recoveryFor('validation_error'));
+            if (isUpstreamTokenRejection(err)) throw ctx.fail('upstream_auth_failed', err.message);
+            throw ctx.fail('validation_error', err.message);
           }
         }
         throw err;
@@ -275,7 +270,6 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
         throw ctx.fail(
           'name_filter_requires_category',
           'nameContains needs a locationCategoryId — the name match is applied to one enumerated category, not to every location type.',
-          ctx.recoveryFor('name_filter_requires_category'),
         );
       }
 
@@ -292,7 +286,6 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
             locationCategoryId: input.locationCategoryId,
             categoryCount,
             maxEnumerable: MAX_ENUMERABLE_CATEGORY,
-            ...ctx.recoveryFor('name_filter_category_too_large'),
           },
         );
       }

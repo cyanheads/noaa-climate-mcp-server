@@ -7,6 +7,7 @@
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateGetStation } from '@/mcp-server/tools/definitions/noaa-climate-get-station.tool.js';
+import { contractFailure } from '../helpers/contract-failure.js';
 
 vi.mock('@/services/cdo/cdo-service.js', () => ({
   getCdoService: vi.fn(),
@@ -91,13 +92,11 @@ describe('noaaClimateGetStation — not_found error contract', () => {
       getStation: vi.fn().mockResolvedValue({}),
     } as unknown as ReturnType<typeof getCdoService>);
 
-    const ctx = createMockContext({ errors: noaaClimateGetStation.errors });
-    const input = noaaClimateGetStation.input.parse({ stationId: 'GHCND:ZZZZZZZZZZ' });
-    await expect(noaaClimateGetStation.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'not_found',
-        recovery: { hint: expect.stringContaining('noaa_climate_find_stations') },
-      },
+    const failure = await contractFailure(noaaClimateGetStation, { stationId: 'GHCND:ZZZZZZZZZZ' });
+
+    expect(failure.data).toMatchObject({
+      reason: 'not_found',
+      recovery: { hint: expect.stringContaining('noaa_climate_find_stations') },
     });
   });
 });

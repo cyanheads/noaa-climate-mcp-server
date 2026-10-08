@@ -180,16 +180,11 @@ export const noaaClimateListDataTypes = tool('noaa_climate_list_data_types', {
         // throttled upstream is not a parameter fault, and its codes never
         // enter that branch anyway.
         const outage = upstreamOutageReason(err);
-        if (outage) throw ctx.fail(outage, err.message, ctx.recoveryFor(outage));
+        if (outage === 'rate_limited') throw ctx.fail('rate_limited', err.message);
+        if (outage === 'service_unavailable') throw ctx.fail('service_unavailable', err.message);
         if (err.code === JsonRpcErrorCode.InvalidParams) {
-          if (isUpstreamTokenRejection(err)) {
-            throw ctx.fail(
-              'upstream_auth_failed',
-              err.message,
-              ctx.recoveryFor('upstream_auth_failed'),
-            );
-          }
-          throw ctx.fail('validation_error', err.message, ctx.recoveryFor('validation_error'));
+          if (isUpstreamTokenRejection(err)) throw ctx.fail('upstream_auth_failed', err.message);
+          throw ctx.fail('validation_error', err.message);
         }
       }
       throw err;

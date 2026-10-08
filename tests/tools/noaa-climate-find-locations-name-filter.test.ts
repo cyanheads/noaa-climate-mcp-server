@@ -15,6 +15,7 @@ import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateFindLocations } from '@/mcp-server/tools/definitions/noaa-climate-find-locations.tool.js';
 import { firstText } from '../helpers/content.js';
+import { contractFailure } from '../helpers/contract-failure.js';
 
 vi.mock('@/services/cdo/cdo-service.js', () => ({
   getCdoService: vi.fn(),
@@ -306,10 +307,10 @@ describe('nameContains — totals, pagination, and disclosure', () => {
 describe('nameContains — declared failure modes', () => {
   it('rejects nameContains without a locationCategoryId, before any upstream call', async () => {
     const impl = installCategory(CITY_COUNT);
-    const ctx = createMockContext({ errors: noaaClimateFindLocations.errors });
-    const input = noaaClimateFindLocations.input.parse({ nameContains: 'seattle' });
 
-    await expect(noaaClimateFindLocations.handler(input, ctx)).rejects.toMatchObject({
+    const failure = await contractFailure(noaaClimateFindLocations, { nameContains: 'seattle' });
+
+    expect(failure).toMatchObject({
       code: JsonRpcErrorCode.ValidationError,
       data: {
         reason: 'name_filter_requires_category',
@@ -321,13 +322,13 @@ describe('nameContains — declared failure modes', () => {
 
   it('rejects ZIP, whose live count exceeds the page budget', async () => {
     const impl = installCategory(ZIP_COUNT);
-    const ctx = createMockContext({ errors: noaaClimateFindLocations.errors });
-    const input = noaaClimateFindLocations.input.parse({
+
+    const failure = await contractFailure(noaaClimateFindLocations, {
       locationCategoryId: 'ZIP',
       nameContains: 'seattle',
     });
 
-    await expect(noaaClimateFindLocations.handler(input, ctx)).rejects.toMatchObject({
+    expect(failure).toMatchObject({
       code: JsonRpcErrorCode.ValidationError,
       data: {
         reason: 'name_filter_category_too_large',

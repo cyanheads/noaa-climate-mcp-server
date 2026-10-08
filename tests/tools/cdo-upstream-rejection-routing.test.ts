@@ -37,6 +37,7 @@ import { noaaClimateListDataCategories } from '@/mcp-server/tools/definitions/no
 import { noaaClimateListDataTypes } from '@/mcp-server/tools/definitions/noaa-climate-list-data-types.tool.js';
 import { noaaClimateListDatasets } from '@/mcp-server/tools/definitions/noaa-climate-list-datasets.tool.js';
 import { noaaClimateListLocationCategories } from '@/mcp-server/tools/definitions/noaa-climate-list-location-categories.tool.js';
+import { contractFailure } from '../helpers/contract-failure.js';
 
 vi.mock('@/services/cdo/cdo-service.js', () => ({
   getCdoService: vi.fn(),
@@ -176,8 +177,7 @@ describe('noaaClimateFetchData — a rejected API token', () => {
   });
 
   it('names the environment variable to check, not the tool inputs', async () => {
-    const error = await fetchDataFailure();
-    const hint = (error.data?.recovery as { hint?: string } | undefined)?.hint ?? '';
+    const hint = (await contractFailure(noaaClimateFetchData, VALID_INPUT)).data.recovery?.hint;
 
     expect(hint).toContain('NOAA_CDO_TOKEN');
     expect(hint).not.toContain('noaa_climate_list_datasets');
@@ -304,6 +304,9 @@ const SORTFIELD_REJECTION =
  *
  * `reasons` is the declared union, pinned here so a reason added to a tool
  * without a reachability test fails this file rather than shipping unreachable.
+ * `call` returns the throw site's error; `contract` runs the same call through
+ * the contract runner, which fills the declared recovery hint the way the wire
+ * does, so hint assertions read from it.
  */
 const CDO_TOOLS = [
   {
@@ -323,6 +326,7 @@ const CDO_TOOLS = [
         noaaClimateFetchData.input.parse(VALID_INPUT),
         createMockContext({ errors: noaaClimateFetchData.errors }),
       ),
+    contract: () => contractFailure(noaaClimateFetchData, VALID_INPUT),
   },
   {
     label: 'noaa_climate_find_locations',
@@ -342,6 +346,7 @@ const CDO_TOOLS = [
         noaaClimateFindLocations.input.parse({ locationCategoryId: 'ST' }),
         createMockContext({ errors: noaaClimateFindLocations.errors }),
       ),
+    contract: () => contractFailure(noaaClimateFindLocations, { locationCategoryId: 'ST' }),
   },
   {
     label: 'noaa_climate_find_stations',
@@ -354,6 +359,7 @@ const CDO_TOOLS = [
         noaaClimateFindStations.input.parse({ locationId: 'FIPS:37' }),
         createMockContext({ errors: noaaClimateFindStations.errors }),
       ),
+    contract: () => contractFailure(noaaClimateFindStations, { locationId: 'FIPS:37' }),
   },
   {
     label: 'noaa_climate_get_station',
@@ -369,6 +375,7 @@ const CDO_TOOLS = [
         noaaClimateGetStation.input.parse({ stationId: 'GHCND:USW00024233' }),
         createMockContext({ errors: noaaClimateGetStation.errors }),
       ),
+    contract: () => contractFailure(noaaClimateGetStation, { stationId: 'GHCND:USW00024233' }),
   },
   {
     label: 'noaa_climate_list_data_categories',
@@ -381,6 +388,7 @@ const CDO_TOOLS = [
         noaaClimateListDataCategories.input.parse({}),
         createMockContext({ errors: noaaClimateListDataCategories.errors }),
       ),
+    contract: () => contractFailure(noaaClimateListDataCategories, {}),
   },
   {
     label: 'noaa_climate_list_data_types',
@@ -393,6 +401,7 @@ const CDO_TOOLS = [
         noaaClimateListDataTypes.input.parse({ datasetId: 'GHCND' }),
         createMockContext({ errors: noaaClimateListDataTypes.errors }),
       ),
+    contract: () => contractFailure(noaaClimateListDataTypes, { datasetId: 'GHCND' }),
   },
   {
     label: 'noaa_climate_list_datasets',
@@ -405,6 +414,7 @@ const CDO_TOOLS = [
         noaaClimateListDatasets.input.parse({}),
         createMockContext({ errors: noaaClimateListDatasets.errors }),
       ),
+    contract: () => contractFailure(noaaClimateListDatasets, {}),
   },
   {
     label: 'noaa_climate_list_location_categories',
@@ -417,10 +427,11 @@ const CDO_TOOLS = [
         noaaClimateListLocationCategories.input.parse({}),
         createMockContext({ errors: noaaClimateListLocationCategories.errors }),
       ),
+    contract: () => contractFailure(noaaClimateListLocationCategories, {}),
   },
 ] as const;
 
-describe.each(CDO_TOOLS)('$label — a rejected API token', ({ method, call }) => {
+describe.each(CDO_TOOLS)('$label — a rejected API token', ({ method, call, contract }) => {
   beforeEach(() => {
     mockCdoRejection(method, cdoRejection(TOKEN_REJECTION, 'any'));
   });
@@ -430,8 +441,7 @@ describe.each(CDO_TOOLS)('$label — a rejected API token', ({ method, call }) =
   });
 
   it('names the environment variable to check, not the tool inputs', async () => {
-    const error = await captureFailure(call);
-    const hint = (error.data?.recovery as { hint?: string } | undefined)?.hint ?? '';
+    const hint = (await contract()).data.recovery?.hint ?? '';
 
     expect(hint).toContain('NOAA_CDO_TOKEN');
     expect(hint).toMatch(/not at fault|not the problem|nothing.*input/i);
@@ -483,7 +493,7 @@ describe('noaaClimateGetStation — a rejection that is not the token', () => {
   });
 });
 
-describe.each(CDO_TOOLS)('$label — an unavailable upstream', ({ method, call }) => {
+describe.each(CDO_TOOLS)('$label — an unavailable upstream', ({ method, call, contract }) => {
   it('routes a status-mapped 503 to service_unavailable', async () => {
     mockCdoRejection(method, cdoStatusFailure(JsonRpcErrorCode.ServiceUnavailable, 503, 'any'));
     const error = await captureFailure(call);
@@ -506,15 +516,14 @@ describe.each(CDO_TOOLS)('$label — an unavailable upstream', ({ method, call }
 
   it('hands back a wait-and-retry move and marks the failure retryable', async () => {
     mockCdoRejection(method, cdoStatusFailure(JsonRpcErrorCode.ServiceUnavailable, 502, 'any'));
-    const error = await captureFailure(call);
-    const hint = (error.data?.recovery as { hint?: string } | undefined)?.hint ?? '';
+    const failure = await contract();
 
-    expect(hint).toMatch(/retry/i);
-    expect(error.data?.retryable).toBe(true);
+    expect(failure.data.recovery?.hint).toMatch(/retry/i);
+    expect(failure.data.retryable).toBe(true);
   });
 });
 
-describe.each(CDO_TOOLS)('$label — a throttled token', ({ method, call }) => {
+describe.each(CDO_TOOLS)('$label — a throttled token', ({ method, call, contract }) => {
   beforeEach(() => {
     mockCdoRejection(
       method,
@@ -535,12 +544,12 @@ describe.each(CDO_TOOLS)('$label — a throttled token', ({ method, call }) => {
   });
 
   it('tells the caller to pace requests rather than merely wait', async () => {
-    const error = await captureFailure(call);
-    const hint = (error.data?.recovery as { hint?: string } | undefined)?.hint ?? '';
+    const failure = await contract();
+    const hint = failure.data.recovery?.hint ?? '';
 
     expect(hint).toMatch(/per second/i);
     expect(hint).toMatch(/space|pace|concurrent|at once/i);
-    expect(error.data?.retryable).toBe(true);
+    expect(failure.data.retryable).toBe(true);
   });
 });
 
