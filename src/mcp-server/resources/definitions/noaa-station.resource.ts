@@ -33,7 +33,6 @@ export const noaaStationResource = resource('noaa://stations/{stationId}', {
     if (!station.id) {
       throw ctx.fail('not_found', `Station "${params.stationId}" not found.`, {
         stationId: params.stationId,
-        ...ctx.recoveryFor('not_found'),
       });
     }
     return station;

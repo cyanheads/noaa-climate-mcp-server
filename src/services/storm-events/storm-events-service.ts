@@ -118,11 +118,12 @@ export class StormEventsService {
     if (!file) {
       const years = [...files.keys()].sort((a, b) => a - b);
       const range = years.length > 0 ? `${years[0]}–${years.at(-1)}` : 'none';
-      // The live range goes in the message; the recovery hint is resolved from
-      // the tool's declared contract rather than written a second time here.
+      // The live range goes in the message; the framework fills the recovery
+      // hint from the tool's declared contract rather than it being written a
+      // second time here.
       throw notFound(
         `The NCEI Storm Events directory has no details file for ${year}. Published years: ${range}.`,
-        { reason: 'year_unavailable', year, ...ctx.recoveryFor('year_unavailable') },
+        { reason: 'year_unavailable', year },
       );
     }
     return file;
@@ -152,7 +153,7 @@ export class StormEventsService {
 
     await this.readRecords(bundle, ctx, (record) => {
       if (!columns) {
-        columns = indexHeader(record, sourceFile, ctx);
+        columns = indexHeader(record, sourceFile);
         return;
       }
       // A blank line parses to a single empty field; it is not a row.
@@ -195,7 +196,6 @@ export class StormEventsService {
       throw serializationError(`Storm Events file ${sourceFile} contained no rows.`, {
         reason: 'malformed_export',
         sourceFile,
-        ...ctx.recoveryFor('malformed_export'),
       });
     }
 
@@ -247,12 +247,7 @@ export class StormEventsService {
       if (!isMissingUpstreamFile(error)) throw error;
       throw serviceUnavailable(
         `The NCEI Storm Events directory lists a ${year} details file that the server will not serve. The year is published but its bundle is not downloadable right now.`,
-        {
-          reason: 'service_unavailable',
-          year,
-          sourceFile: republished,
-          ...ctx.recoveryFor('service_unavailable'),
-        },
+        { reason: 'service_unavailable', year, sourceFile: republished },
         { cause: error },
       );
     }
@@ -288,7 +283,7 @@ export class StormEventsService {
       if (!isMissingUpstreamFile(error)) throw error;
       throw serviceUnavailable(
         'The NCEI Storm Events directory index is not being served right now, so no year can be resolved.',
-        { reason: 'service_unavailable', ...ctx.recoveryFor('service_unavailable') },
+        { reason: 'service_unavailable' },
         { cause: error },
       );
     }
@@ -306,7 +301,7 @@ export class StormEventsService {
     if (files.size === 0) {
       throw serviceUnavailable(
         'The NCEI Storm Events directory listing carried no details files — the index may be unavailable or its layout may have changed.',
-        { reason: 'service_unavailable', ...ctx.recoveryFor('service_unavailable') },
+        { reason: 'service_unavailable' },
       );
     }
 
@@ -394,12 +389,7 @@ export class StormEventsService {
           this.years.delete(bundle.year);
           throw serviceUnavailable(
             `The NCEI Storm Events bundle for ${bundle.year} did not decompress — the download was truncated, or the server returned something other than the gzip file. The copy that failed has been discarded.`,
-            {
-              reason: 'service_unavailable',
-              year: bundle.year,
-              sourceFile: bundle.sourceFile,
-              ...ctx.recoveryFor('service_unavailable'),
-            },
+            { reason: 'service_unavailable', year: bundle.year, sourceFile: bundle.sourceFile },
             { cause },
           );
         }
@@ -422,13 +412,13 @@ export class StormEventsService {
 }
 
 /** Map header names to column positions, failing loudly if the export changed shape. */
-function indexHeader(record: string[], sourceFile: string, ctx: Context): Map<string, number> {
+function indexHeader(record: string[], sourceFile: string): Map<string, number> {
   const columns = new Map(record.map((name, index) => [name.trim(), index] as const));
   const missing = REQUIRED_COLUMNS.filter((name) => !columns.has(name));
   if (missing.length > 0) {
     throw serializationError(
       `Storm Events file ${sourceFile} is missing expected columns: ${missing.join(', ')}.`,
-      { reason: 'malformed_export', sourceFile, missing, ...ctx.recoveryFor('malformed_export') },
+      { reason: 'malformed_export', sourceFile, missing },
     );
   }
   return columns;

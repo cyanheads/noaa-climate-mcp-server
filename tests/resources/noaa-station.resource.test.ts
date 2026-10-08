@@ -8,6 +8,7 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaStationResource } from '@/mcp-server/resources/definitions/noaa-station.resource.js';
+import { resourceFailure } from '../helpers/resource-failure.js';
 
 vi.mock('@/services/cdo/cdo-service.js', () => ({
   getCdoService: vi.fn(),
@@ -94,12 +95,13 @@ describe('noaaStationResource', () => {
       getStation: vi.fn().mockResolvedValue({}),
     } as unknown as ReturnType<typeof getCdoService>);
 
-    const ctx = createMockContext({ errors: noaaStationResource.errors });
-    const err = await Promise.resolve(
-      noaaStationResource.handler({ stationId: 'GHCND:NOT-A-REAL-STATION' }, ctx),
-    ).catch((e: unknown) => e);
+    const failure = await resourceFailure(
+      noaaStationResource,
+      'noaa://stations/GHCND:NOT-A-REAL-STATION',
+    );
 
-    expect((err as McpError).data).toMatchObject({
+    expect(failure.code).toBe(JsonRpcErrorCode.NotFound);
+    expect(failure.data).toMatchObject({
       reason: 'not_found',
       stationId: 'GHCND:NOT-A-REAL-STATION',
       recovery: { hint: expect.stringContaining('noaa_climate_find_stations') },
@@ -150,7 +152,6 @@ describe('noaaStationResource', () => {
     expect((err as McpError).data).toMatchObject({
       reason: 'not_found',
       stationId: 'GHCND:NOT-REAL',
-      recovery: { hint: expect.stringContaining('noaa_climate_find_stations') },
     });
   });
 

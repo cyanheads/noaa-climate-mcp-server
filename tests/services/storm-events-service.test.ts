@@ -18,24 +18,9 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => {
 });
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { noaaClimateSearchStormEvents } from '@/mcp-server/tools/definitions/noaa-climate-search-storm-events.tool.js';
 import { StormEventsService } from '@/services/storm-events/storm-events-service.js';
 
 const BASE = 'https://mock-ncei.test/csvfiles/';
-
-/**
- * The recovery text the tool's error contract declares for a reason. The
- * service resolves the same entry through `ctx.recoveryFor`, so asserting
- * against this proves the hint is derived rather than written a second time.
- */
-function declaredRecovery(reason: string): string {
-  const entry = noaaClimateSearchStormEvents.errors?.find((e) => e.reason === reason);
-  if (!entry) throw new Error(`The tool declares no error contract entry for ${reason}.`);
-  return entry.recovery;
-}
-
-/** A context carrying the tool's contract, so service throws can resolve recovery hints. */
-const contractContext = () => createMockContext({ errors: noaaClimateSearchStormEvents.errors });
 
 /** Await a call that must reject, and hand back the error it threw. */
 async function rejection(promise: Promise<unknown>): Promise<McpError> {
@@ -187,18 +172,23 @@ describe('StormEventsService — filename discovery', () => {
   it('reports an index carrying no details files as the declared service_unavailable reason', async () => {
     routeFetch({ [BASE]: () => listingResponse('<html><body>nothing here</body></html>') });
     const service = new StormEventsService(BASE);
-    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+    const error = await rejection(
+      service.search({ ...baseQuery, year: 2024 }, createMockContext()),
+    );
 
     expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
     expect(error.data).toMatchObject({ reason: 'service_unavailable' });
-    expect(error.data?.recovery).toEqual({ hint: declaredRecovery('service_unavailable') });
+    expect(error.data?.recovery).toBeUndefined();
   });
 
-  it('carries the declared recovery hint for an unpublished year rather than a second copy of it', async () => {
+  it('leaves an unpublished year’s recovery hint to the declared contract', async () => {
     const service = new StormEventsService(BASE);
-    const error = await rejection(service.resolveDetailsFile(2099, contractContext()));
+    const error = await rejection(service.resolveDetailsFile(2099, createMockContext()));
 
-    expect(error.data?.recovery).toEqual({ hint: declaredRecovery('year_unavailable') });
+    // The framework fills the declared hint from `data.reason`; a hint written
+    // here would be a second copy to drift.
+    expect(error.data?.reason).toBe('year_unavailable');
+    expect(error.data?.recovery).toBeUndefined();
     // The live range stays in the message, which the declared hint points at.
     expect(error.message).toContain('1950–2025');
   });
@@ -300,16 +290,21 @@ describe('StormEventsService — parsing the gzip bundle', () => {
   it.each([
     ['required columns are missing', 'COL_A,COL_B\r\n1,2\r\n'],
     ['the file carries no rows', ''],
-  ])('carries the declared malformed_export recovery hint when %s', async (_case, body) => {
-    routeFetch({
-      [`${BASE}StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz`]: () => gzipResponse(body),
-    });
-    const service = new StormEventsService(BASE);
-    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+  ])(
+    'throws malformed_export, leaving its hint to the declared contract, when %s',
+    async (_case, body) => {
+      routeFetch({
+        [`${BASE}StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz`]: () => gzipResponse(body),
+      });
+      const service = new StormEventsService(BASE);
+      const error = await rejection(
+        service.search({ ...baseQuery, year: 2024 }, createMockContext()),
+      );
 
-    expect(error.data).toMatchObject({ reason: 'malformed_export' });
-    expect(error.data?.recovery).toEqual({ hint: declaredRecovery('malformed_export') });
-  });
+      expect(error.data).toMatchObject({ reason: 'malformed_export' });
+      expect(error.data?.recovery).toBeUndefined();
+    },
+  );
 });
 
 describe('StormEventsService — damage values', () => {
@@ -649,20 +644,24 @@ describe('StormEventsService — a body that does not decompress', () => {
   it('reports an HTML error page as a typed service_unavailable, not an empty TypeError', async () => {
     routeFetch({ [FILE]: htmlErrorPage });
     const service = new StormEventsService(BASE);
-    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+    const error = await rejection(
+      service.search({ ...baseQuery, year: 2024 }, createMockContext()),
+    );
 
     expect(error).toBeInstanceOf(McpError);
     expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
     expect(error.message).not.toBe('');
     expect(error.message).toMatch(/decompress/i);
     expect(error.data).toMatchObject({ reason: 'service_unavailable', year: 2024 });
-    expect(error.data?.recovery).toEqual({ hint: declaredRecovery('service_unavailable') });
+    expect(error.data?.recovery).toBeUndefined();
   });
 
   it('reports a truncated transfer the same way', async () => {
     routeFetch({ [FILE]: truncatedGzip });
     const service = new StormEventsService(BASE);
-    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+    const error = await rejection(
+      service.search({ ...baseQuery, year: 2024 }, createMockContext()),
+    );
 
     expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
     expect(error.data).toMatchObject({ reason: 'service_unavailable' });
@@ -731,11 +730,13 @@ describe('StormEventsService — a republished year', () => {
     });
     const service = new StormEventsService(BASE);
 
-    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+    const error = await rejection(
+      service.search({ ...baseQuery, year: 2024 }, createMockContext()),
+    );
 
     expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
     expect(error.data).toMatchObject({ reason: 'service_unavailable', year: 2024 });
-    expect(error.data?.recovery).toEqual({ hint: declaredRecovery('service_unavailable') });
+    expect(error.data?.recovery).toBeUndefined();
     // Listing, file, listing again, file again — and then it stops.
     expect(vi.mocked(fetch).mock.calls.length).toBe(4);
   });
@@ -747,7 +748,9 @@ describe('StormEventsService — a republished year', () => {
     });
     const service = new StormEventsService(BASE);
 
-    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+    const error = await rejection(
+      service.search({ ...baseQuery, year: 2024 }, createMockContext()),
+    );
 
     expect(error.code).not.toBe(JsonRpcErrorCode.NotFound);
     expect(error.data?.reason).not.toBe('year_unavailable');
@@ -758,11 +761,13 @@ describe('StormEventsService — a republished year', () => {
     routeFetch({ [BASE]: gone });
     const service = new StormEventsService(BASE);
 
-    const error = await rejection(service.search({ ...baseQuery, year: 2024 }, contractContext()));
+    const error = await rejection(
+      service.search({ ...baseQuery, year: 2024 }, createMockContext()),
+    );
 
     expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
     expect(error.data).toMatchObject({ reason: 'service_unavailable' });
-    expect(error.data?.recovery).toEqual({ hint: declaredRecovery('service_unavailable') });
+    expect(error.data?.recovery).toBeUndefined();
     expect(error.message).not.toContain(BASE);
   });
 });

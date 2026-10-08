@@ -6,11 +6,13 @@
  * @module tests/tools/noaa-climate-search-storm-events.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateSearchStormEvents } from '@/mcp-server/tools/definitions/noaa-climate-search-storm-events.tool.js';
 import type { StormEvent, StormEventsSearchResult } from '@/services/storm-events/types.js';
 import { firstText } from '../helpers/content.js';
+import { contractFailure } from '../helpers/contract-failure.js';
 
 vi.mock('@/services/storm-events/storm-events-service.js', () => ({
   getStormEventsService: vi.fn(),
@@ -524,5 +526,22 @@ describe('noaaClimateSearchStormEvents — error contract', () => {
     );
 
     await expect(run({ year: 2099 })).rejects.toThrow(/no details file for 2099/);
+  });
+
+  it.each([
+    ['year_unavailable', JsonRpcErrorCode.NotFound],
+    ['service_unavailable', JsonRpcErrorCode.ServiceUnavailable],
+    ['malformed_export', JsonRpcErrorCode.SerializationError],
+  ] as const)('puts the declared %s hint on the wire for a service throw', async (reason, code) => {
+    // The service throws `{ reason }` alone; the hint the caller reads comes
+    // from this tool's declared contract.
+    search.mockRejectedValue(new McpError(code, `NCEI failure (${reason}).`, { reason }));
+    const declared = noaaClimateSearchStormEvents.errors?.find((e) => e.reason === reason);
+
+    const failure = await contractFailure(noaaClimateSearchStormEvents, { year: 2024 });
+
+    expect(failure.code).toBe(code);
+    expect(failure.data.reason).toBe(reason);
+    expect(failure.data.recovery?.hint).toBe(declared?.recovery);
   });
 });

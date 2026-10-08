@@ -286,7 +286,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         throw ctx.fail(
           'invalid_state_code',
           `state "${input.state}" is not a two-letter US postal code. NCEI names its per-state exports by postal code, so a full state name or an abbreviation of another length addresses no export.`,
-          { state: input.state, ...ctx.recoveryFor('invalid_state_code') },
+          { state: input.state },
         );
       }
 
@@ -298,11 +298,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         throw ctx.fail(
           'invalid_year_range',
           `startYear ${input.startYear} is after endYear ${input.endYear}.`,
-          {
-            startYear: input.startYear,
-            endYear: input.endYear,
-            ...ctx.recoveryFor('invalid_year_range'),
-          },
+          { startYear: input.startYear, endYear: input.endYear },
         );
       }
 

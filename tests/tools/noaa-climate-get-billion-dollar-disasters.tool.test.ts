@@ -11,6 +11,7 @@ import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mc
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateGetBillionDollarDisasters as billionDollarDisasters } from '@/mcp-server/tools/definitions/noaa-climate-get-billion-dollar-disasters.tool.js';
 import { firstText } from '../helpers/content.js';
+import { contractFailure } from '../helpers/contract-failure.js';
 
 vi.mock(
   '@/services/billion-dollar-disasters/billion-dollar-disasters-service.js',
@@ -384,10 +385,10 @@ describe('declared error contract', () => {
   });
 
   it('fails with invalid_state_code for a full state name', async () => {
-    const error = await captureFailure({ state: 'California' });
+    const failure = await contractFailure(billionDollarDisasters, { state: 'California' });
 
-    expect(error.data?.reason).toBe('invalid_state_code');
-    expect(error.data?.recovery).toMatchObject({ hint: expect.stringContaining('two-letter') });
+    expect(failure.data.reason).toBe('invalid_state_code');
+    expect(failure.data.recovery).toMatchObject({ hint: expect.stringContaining('two-letter') });
   });
 
   it('fails with invalid_state_code for a three-letter code', async () => {
@@ -395,12 +396,15 @@ describe('declared error contract', () => {
   });
 
   it('fails with invalid_year_range when the range is inverted', async () => {
-    const error = await captureFailure({ startYear: 2024, endYear: 2000 });
+    const failure = await contractFailure(billionDollarDisasters, {
+      startYear: 2024,
+      endYear: 2000,
+    });
 
-    expect(error.data?.reason).toBe('invalid_year_range');
-    expect(error.message).toContain('2024');
-    expect(error.message).toContain('2000');
-    expect(error.data?.recovery).toMatchObject({ hint: expect.stringContaining('Swap') });
+    expect(failure.data.reason).toBe('invalid_year_range');
+    expect(failure.message).toContain('2024');
+    expect(failure.message).toContain('2000');
+    expect(failure.data.recovery).toMatchObject({ hint: expect.stringContaining('Swap') });
   });
 
   it('accepts a range whose ends are equal', async () => {
@@ -418,6 +422,26 @@ describe('declared error contract', () => {
     });
 
     expect((await captureFailure({})).data?.reason).toBe('malformed_export');
+  });
+
+  it.each([
+    ['unknown_state', JsonRpcErrorCode.NotFound],
+    ['malformed_export', JsonRpcErrorCode.SerializationError],
+  ] as const)('puts the declared %s hint on the wire for a service throw', async (reason, code) => {
+    // The service throws `{ reason }` alone; the hint the caller reads comes
+    // from this tool's declared contract.
+    mockService({
+      searchEvents: vi
+        .fn()
+        .mockRejectedValue(new McpError(code, `NCEI failure (${reason}).`, { reason })),
+    });
+    const declared = billionDollarDisasters.errors?.find((entry) => entry.reason === reason);
+
+    const failure = await contractFailure(billionDollarDisasters, {});
+
+    expect(failure.code).toBe(code);
+    expect(failure.data.reason).toBe(reason);
+    expect(failure.data.recovery?.hint).toBe(declared?.recovery);
   });
 });
 

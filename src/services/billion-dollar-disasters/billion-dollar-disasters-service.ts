@@ -133,7 +133,7 @@ export class BillionDollarDisastersService {
   /** Individual disasters, filtered and paged. */
   async searchEvents(query: DisasterQuery, ctx: Context): Promise<DisasterEventsResult> {
     const parsed = await this.loadExport(exportName('events', query.state), query.state, ctx);
-    const column = columnIndex(parsed, ['Name', 'Disaster', 'Begin Date', 'End Date'], ctx);
+    const column = columnIndex(parsed, ['Name', 'Disaster', 'Begin Date', 'End Date']);
 
     const disasterTypesInFile = new Set<string>();
     const years: number[] = [];
@@ -197,7 +197,7 @@ export class BillionDollarDisastersService {
   /** Per-year counts and costs by disaster class, filtered and paged. */
   async searchSummaries(query: DisasterQuery, ctx: Context): Promise<DisasterSummaryResult> {
     const parsed = await this.loadExport(exportName('time-series', query.state), query.state, ctx);
-    const column = columnIndex(parsed, ['State', 'Year'], ctx);
+    const column = columnIndex(parsed, ['State', 'Year']);
 
     const years: number[] = [];
     const summaries: DisasterYearSummary[] = [];
@@ -366,12 +366,12 @@ export class BillionDollarDisastersService {
         state === undefined
           ? `NCEI is not publishing the national billion-dollar disasters export "${file}" right now.`
           : `NCEI publishes no billion-dollar disasters export for state "${state}". Not every two-letter code has one — American Samoa (AS) and the Northern Mariana Islands (MP) have no export, while the 50 states, DC, PR, VI, and GU do.`,
-        { reason: 'unknown_state', sourceFile: file, ...ctx.recoveryFor('unknown_state') },
+        { reason: 'unknown_state', sourceFile: file },
         { cause: error },
       );
     }
 
-    const parsed = parseExport(file, text, ctx);
+    const parsed = parseExport(file, text);
     this.exports.delete(file);
     this.exports.set(file, { parsed, fetchedAtMs: Date.now() });
     while (this.exports.size > MAX_CACHED_FILES) {
@@ -402,7 +402,7 @@ export function isStateCodeShape(value: string): boolean {
  * mis-keys every column, so the header is found by name and everything above it
  * is read only for the unit.
  */
-function parseExport(sourceFile: string, text: string, ctx: Context): ParsedExport {
+function parseExport(sourceFile: string, text: string): ParsedExport {
   const reader = new CsvStreamReader();
   const records = [...reader.push(text), ...reader.end()];
 
@@ -412,7 +412,7 @@ function parseExport(sourceFile: string, text: string, ctx: Context): ParsedExpo
   if (headerIndex === -1) {
     throw serializationError(
       `Billion-dollar disasters export ${sourceFile} has no recognizable header row — the export changed shape.`,
-      { reason: 'malformed_export', sourceFile, ...ctx.recoveryFor('malformed_export') },
+      { reason: 'malformed_export', sourceFile },
     );
   }
 
@@ -425,12 +425,7 @@ function parseExport(sourceFile: string, text: string, ctx: Context): ParsedExpo
   if (!declaredUnit || costMultiplier === undefined) {
     throw serializationError(
       `Billion-dollar disasters export ${sourceFile} does not declare a cost unit this server recognizes. NCEI states the unit in the file's own preamble, and it differs between the per-event and per-year exports, so no default can be assumed.`,
-      {
-        reason: 'malformed_export',
-        sourceFile,
-        declaredUnit,
-        ...ctx.recoveryFor('malformed_export'),
-      },
+      { reason: 'malformed_export', sourceFile, declaredUnit },
     );
   }
 
@@ -440,7 +435,7 @@ function parseExport(sourceFile: string, text: string, ctx: Context): ParsedExpo
   if (rows.length === 0) {
     throw serializationError(
       `Billion-dollar disasters export ${sourceFile} carried a header but no rows.`,
-      { reason: 'malformed_export', sourceFile, ...ctx.recoveryFor('malformed_export') },
+      { reason: 'malformed_export', sourceFile },
     );
   }
 
@@ -448,18 +443,13 @@ function parseExport(sourceFile: string, text: string, ctx: Context): ParsedExpo
 }
 
 /** Map header names to column positions, failing loudly if the export changed shape. */
-function columnIndex(parsed: ParsedExport, required: string[], ctx: Context): Map<string, number> {
+function columnIndex(parsed: ParsedExport, required: string[]): Map<string, number> {
   const column = new Map(parsed.header.map((name, index) => [name, index] as const));
   const missing = required.filter((name) => !column.has(name));
   if (missing.length > 0) {
     throw serializationError(
       `Billion-dollar disasters export ${parsed.sourceFile} is missing expected columns: ${missing.join(', ')}.`,
-      {
-        reason: 'malformed_export',
-        sourceFile: parsed.sourceFile,
-        missing,
-        ...ctx.recoveryFor('malformed_export'),
-      },
+      { reason: 'malformed_export', sourceFile: parsed.sourceFile, missing },
     );
   }
   return column;
