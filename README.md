@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.6.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.6.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -57,94 +57,75 @@ NOAA Climate Data Online (CDO) API v2 for historical weather observations, plus 
 
 ### `noaa_climate_list_datasets` <sub>tool</sub>
 
-- No required parameters — returns all ~11 CDO datasets by default; optional filters by data type, location, station, or date range
-- Paginated (`limit` 1–1000, default 25; `offset`), sortable by `id`, `name`, `mindate`, `maxdate`, or `datacoverage`
-- Common IDs: GHCND (daily, 1763–present), GSOM (monthly), GSOY (annual), NORMAL_DLY/MLY/ANN/HLY (1981–2010 normals)
+- No required inputs; optional data type, location, station, and date-range filters; `limit` 1–1000 (default 25) with `offset`, sortable by `id`, `name`, `mindate`, `maxdate`, or `datacoverage`
+- Returns each dataset's ID, name, and date span — GHCND (daily, 1763–present), GSOM (monthly), GSOY (annual), NORMAL_DLY/MLY/ANN/HLY (1981–2010 normals)
 
 ---
 
 ### `noaa_climate_list_data_categories` <sub>tool</sub>
 
-- 42 categories total (Temperature, Precipitation, Wind, Pressure, Sunshine, Sky cover, Weather Type, and more)
-- Optional filters by dataset, location, station, or date range; paginated (`limit` 1–1000, default 25; `offset`), sortable by `id` or `name`
-- Use before `noaa_climate_list_data_types` to narrow by measurement domain
+- Optional dataset, location, station, and date-range filters; `limit` 1–1000 (default 25) with `offset`, sortable by `id` or `name`
+- Returns the 42 measurement categories (Temperature, Precipitation, Wind, Pressure, Sunshine, and more), whose IDs narrow `noaa_climate_list_data_types` as `datacategoryId`
 
 ---
 
 ### `noaa_climate_list_data_types` <sub>tool</sub>
 
-- Filter by `datasetId` (e.g. `GHCND`) or `datacategoryId` (e.g. `TEMP`) — hundreds of types exist across all datasets
-- Common GHCND types: `TMAX`, `TMIN`, `PRCP`, `SNOW`, `SNWD`, `AWND`
-- Coverage fraction and date range are included only when the upstream record carries them
-- Paginated (`limit` 1–1000, default 25; `offset`)
+- Filter by `datasetId` (e.g. `GHCND`) or `datacategoryId` (e.g. `TEMP`); `limit` 1–1000 (default 25) with `offset`
+- Returns the datatype IDs `noaa_climate_fetch_data` takes — common GHCND types are `TMAX`, `TMIN`, `PRCP`, `SNOW`, `SNWD`, `AWND` — with coverage and date range when CDO carries them
 
 ---
 
 ### `noaa_climate_list_location_categories` <sub>tool</sub>
 
+- Pagination and sort only: `limit` 1–1000 (default 25) with `offset`, sortable by `id` or `name`
 - Returns the 12 category IDs `noaa_climate_find_locations` accepts as `locationCategoryId`: `CITY`, `ST`, `CNTY`, `CNTRY`, `ZIP`, `US_TERR`, `CLIM_REG`, `CLIM_DIV`, `HYD_ACC`, `HYD_CAT`, `HYD_REG`, `HYD_SUB`
-- Sortable by `id` or `name`; paginated (`limit` 1–1000, default 25; `offset`)
-- Pagination and sort only — CDO ignores dataset, location, station, and date filters on this endpoint, so none are offered
 
 ---
 
 ### `noaa_climate_find_locations` <sub>tool</sub>
 
-- `locationCategoryId` scopes the search (e.g. `ST` returns all 51 states in one call); omit it to return every location type
-- `nameContains` synthesizes the name search CDO lacks by enumerating the category client-side and matching the substring case-insensitively — capped to categories of at most 4,000 locations (every category but `ZIP`, 30,415); a `datasetId`/`datacategoryId` filter can narrow a larger category under that limit
-- Returns location IDs used by `noaa_climate_find_stations` and `noaa_climate_fetch_data` — `FIPS:37`, `CITY:US530018`, `ZIP:98101`
-- Typed failures when `nameContains` is passed without `locationCategoryId`, or the resolved category is too large to enumerate
-- Paginated (`limit` 1–1000, default 25; `offset`); sort alphabetically by `name` to page through an over-large category instead
+- `locationCategoryId` scopes the search (e.g. `ST` returns all 51 states); optional `datasetId`, `datacategoryId`, and date-range filters; `limit` 1–1000 (default 25) with `offset`
+- Returns the location IDs `noaa_climate_find_stations` and `noaa_climate_fetch_data` take — `FIPS:37`, `CITY:US530018`, `ZIP:98101`
+- `nameContains` adds a case-insensitive name match within one category of at most 4,000 locations (every category but `ZIP`); it fails as `name_filter_requires_category` without a category and `name_filter_category_too_large` past the cap
 
 ---
 
 ### `noaa_climate_find_stations` <sub>tool</sub>
 
-- Filter by `locationId`, `extent` (lat/lon bounding box), `datasetId`, `datatypeId` (array), and date range
-- Returns station IDs, names, coordinates, elevation, and data-coverage dates — station IDs feed `noaa_climate_fetch_data` as `stationId`
-- Pair `datasetId` and date range to confirm a returned station actually has data for what you plan to query
-- Common station ID formats: `GHCND:USW00024233`, `COOP:010008`
-- Paginated (`limit` 1–1000, default 25; `offset`)
+- Filter by `locationId`, `extent` (lat/lon bounding box), `datasetId`, `datatypeId` (array), and date range; `limit` 1–1000 (default 25) with `offset`
+- Returns station IDs (`GHCND:USW00024233`, `COOP:010008`), names, coordinates, elevation, and data-coverage dates — the IDs feed `noaa_climate_fetch_data` as `stationId`
 
 ---
 
 ### `noaa_climate_get_station` <sub>tool</sub>
 
-- Single required input: `stationId`
-- Returns name, coordinates, elevation, and full data-coverage date range
-- Mirrors the `noaa://stations/{stationId}` resource as a direct call
-- `not_found` when the ID is well-formed but resolves to nothing
+- Single required input: `stationId`, from `noaa_climate_find_stations`; the tool form of the `noaa://stations/{stationId}` resource
+- Returns name, coordinates, elevation, and the full data-coverage date range; fails as `not_found` when a well-formed ID resolves to nothing
 
 ---
 
 ### `noaa_climate_fetch_data` <sub>tool</sub>
 
-- Requires `datasetId`, `startDate`, `endDate`; optional `stationId`, `locationId`, `datatypeId` filters (arrays)
-- Date-range cap depends on dataset: GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3 allow 1 year max; GSOM, GSOY, NORMAL_MLY, NORMAL_ANN allow 10 years max, measured to the end of the calendar month that many years after `startDate`
+- Requires `datasetId`, `startDate`, `endDate`; optional `stationId`, `locationId`, `datatypeId` arrays. The span cap is 1 year for GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3 and 10 years for GSOM, GSOY, NORMAL_MLY, NORMAL_ANN; any `NORMAL_*` dataset takes `startDate=2010-01-01` / `endDate=2010-12-31`
+- Returns flat `{ date, datatype, station, value, attributes }` records plus an `effectiveQuery` echo; `date_range_exceeded` names the latest `maxEndDate` CDO will accept
 - `units: "metric"` or `"standard"` is strongly recommended — without it, GHCND values are raw tenths-of-unit integers (e.g. `TMAX=256` is 25.6°C)
-- For any `NORMAL_*` dataset, use `startDate=2010-01-01` / `endDate=2010-12-31` — the fixed API proxy year regardless of which 30-year period is described
-- `date_range_exceeded` reports the exact `maxEndDate` CDO will accept; an unrecognized `datasetId` fails `validation_error` before any network call
-- Returns flat `{ date, datatype, station, value, attributes }` tuples plus an `effectiveQuery` echo of the applied filters
 
 ---
 
 ### `noaa_climate_search_storm_events` <sub>tool</sub>
 
-- Separate NCEI bulk-CSV corpus — no token required; `year` is required (1950 through the current partial year, one file per year)
-- Filter by `state` (the full NCEI name, e.g. `"FLORIDA"`, never a postal code), `eventType` (matched case-insensitively against the exact NWS label), `month`, and `minDamageInUsd`
-- Damage arrives as both the raw magnitude-suffixed string (`"1.20M"`) and a parsed dollar amount; an unreported figure is omitted rather than reported as zero, and `minDamageInUsd` excludes those rows and reports how many it dropped
-- `limit` 1–100 (default 50) with `offset`; a zero-match response names the event types and states the requested year actually contains
-- `year_unavailable` when NCEI has no file for the year; `malformed_export` if a downloaded file fails to decompress into the expected table
+- No token required; `year` is required (1950 through the current partial year); filter by `state` (the full NCEI name, e.g. `"FLORIDA"`), `eventType`, `month`, and `minDamageInUsd`; `limit` 1–100 (default 50) with `offset`
+- Damage arrives as the raw magnitude-suffixed string (`"1.20M"`) and a parsed dollar amount, omitted rather than zeroed when NCEI reported none; a zero-match response names the event types and states the year contains
+- Fails as `year_unavailable` when NCEI publishes no file for the year, and `malformed_export` when a downloaded file is not the expected table
 
 ---
 
 ### `noaa_climate_get_billion_dollar_disasters` <sub>tool</sub>
 
-- Two shapes: individual disasters by default, or `summary=true` for per-year counts and costs by disaster class plus an "All Disasters" total
-- Every cost is normalized to whole US dollars regardless of the unit NCEI declares per export (millions for the per-event file, billions for the national per-year file); the response echoes the source unit as `declaredCostUnit`
-- Filter by `startYear`/`endYear` (overlap match), `disasterType` (one of seven exact NCEI classes), `minCostInUsd`, and `state` (two-letter postal code)
-- A `state` scope reports each disaster's national cost, not a state share (`costBasis: "national"`), and its per-year rows carry a binned `costRangeInUsd` instead of a point estimate and confidence bands
-- Coverage runs 1980 through the last year NCEI has finished assessing (`coveredYears`), not the current calendar year; `limit` 1–100 (default 50) with `offset`
+- Individual disasters by default, or `summary=true` for per-year counts and costs by disaster class; filter by `startYear`/`endYear`, `disasterType` (one of seven NCEI classes), `minCostInUsd`, and `state` (two-letter postal code); `limit` 1–100 (default 50) with `offset`
+- Every cost is whole US dollars whatever unit the export declares (echoed as `declaredCostUnit`); a `state` scope reports national costs (`costBasis: "national"`) and binned per-year `costRangeInUsd`
+- Coverage runs 1980 through the last year NCEI has finished assessing (`coveredYears`), not the current calendar year
 
 ---
 
@@ -157,9 +138,8 @@ NOAA Climate Data Online (CDO) API v2 for historical weather observations, plus 
 
 ### `noaa://stations/{stationId}` <sub>resource</sub>
 
-- Station metadata by ID — mirrors `noaa_climate_get_station`
-- `stationId` comes from `noaa_climate_find_stations`
-- `not_found` when the ID is well-formed but resolves to nothing
+- `stationId` from `noaa_climate_find_stations`; the resource form of `noaa_climate_get_station`
+- Returns station metadata; fails as `not_found` when a well-formed ID resolves to nothing
 
 ## Features
 
@@ -307,6 +287,8 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `MCP_GC_PRESSURE_INTERVAL_MS` | Opt-in Bun-only forced-GC pressure loop (ms). Try `60000` if heap growth is observed under sustained HTTP load. | `0` (disabled) |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1` | `in-memory` |
 | `OTEL_ENABLED` | Enable OpenTelemetry | `false` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP base URL; traces go to `/v1/traces` and metrics to `/v1/metrics`. Nothing is exported without it | none |
+| `LOG_TOOL_FAILURE_PAYLOADS` | Log each failed tool call's arguments and result, redacted by key name and capped at `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` (default `16384`). A secret inside a free-form value is not redacted. | `false` |
 
 See [`.env.example`](./.env.example) for the full list of optional overrides.
 
