@@ -33,6 +33,29 @@ beforeEach(() => {
 });
 
 describe('noaaClimateGetStation', () => {
+  it.each([0, 0.9969, 1])(
+    'preserves coordinate and fractional coverage precision %s on both surfaces',
+    async (datacoverage) => {
+      vi.mocked(getCdoService).mockReturnValue({
+        getStation: vi.fn().mockResolvedValue({
+          ...mockStation,
+          latitude: 47.44467,
+          longitude: -122.31442,
+          datacoverage,
+        }),
+      } as unknown as ReturnType<typeof getCdoService>);
+      const result = await noaaClimateGetStation.handler(
+        noaaClimateGetStation.input.parse({ stationId: mockStation.id }),
+        createMockContext({ errors: noaaClimateGetStation.errors }),
+      );
+      expect(result.latitude).toBe(47.44467);
+      expect(result.longitude).toBe(-122.31442);
+      expect(result.datacoverage).toBe(datacoverage);
+      const text = firstText(noaaClimateGetStation.format!(result));
+      expect(text).toContain('47.44467, -122.31442');
+      expect(text).toContain(`**Coverage (0–1):** ${datacoverage}`);
+    },
+  );
   it('returns full station metadata', async () => {
     const ctx = createMockContext({ errors: noaaClimateGetStation.errors });
     const input = noaaClimateGetStation.input.parse({ stationId: 'GHCND:USC00450974' });

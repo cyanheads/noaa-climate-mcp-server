@@ -59,10 +59,20 @@ function carriesValue(values: string[], needle: string): boolean {
 export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_events', {
   title: 'Search NOAA Storm Events',
   description:
-    'Search the NCEI Storm Events Database for one calendar year — tornadoes, hail, floods, hurricanes, winter storms, heat, and every other NWS Storm Data event type, with magnitude, direct and indirect deaths and injuries, property and crop damage, and the episode and event narratives. This is a different NOAA corpus from the CDO tools on this server: it carries discrete severe-weather events rather than station observations, needs no token, and is published as one bulk file per year, so year is required. Filter with state (the full upper-case name NCEI writes, e.g. "FLORIDA" — not the postal code "FL"), eventType (the exact NWS label, e.g. "Tornado", "Hail", "Flash Flood", "Hurricane (Typhoon)", matched case-insensitively), month, and minDamageInUsd. Damage arrives from NCEI as a magnitude-suffixed string ("75.00K", "1.20M", "1.00B") and is returned as both the raw cell and a parsed dollar amount; an unreported figure is omitted entirely rather than reported as zero, and minDamageInUsd therefore excludes those rows and says how many it dropped. Results come back in the source file\'s own row order, paged with limit and offset, and totalCount is the true match count for the whole year.',
+    'Search the NCEI Storm Events Database for one calendar year — tornadoes, hail, floods, hurricanes, winter storms, heat, and every other NWS Storm Data event type, with magnitude, direct and indirect casualties, property and crop damage, and narratives. This corpus carries discrete severe-weather events rather than CDO station observations, needs no token, and publishes one bulk file per year, so year is required. Filter by episodeId from a returned event, state (full NCEI name such as "FLORIDA", not "FL"), eventType (exact NWS label such as "Tornado", "Flash Flood", or "Hurricane (Typhoon)", case-insensitive), month, and minDamageInUsd. Damage retains its raw magnitude-suffixed cell and parsed dollar amount; unreported figures are omitted, and minDamageInUsd discloses how many unknown figures it excluded. Events reference distinct page-local episodeNarratives by episodeNarrativeRef; eventNarrative stays on each event. Optional local ISO beginDate/endDate values can feed CDO date filters; raw NCEI date-time and timezone remain available. Source row order, limit/offset pagination, and whole-year filtered totalCount are preserved.',
   annotations: { readOnlyHint: true, openWorldHint: true },
 
   input: z.object({
+    episodeId: z
+      .string()
+      .refine(
+        (value) => /^\d*$/.test(value.trim()),
+        'Episode ID must contain only digits, or be blank.',
+      )
+      .optional()
+      .describe(
+        'Exact EPISODE_ID from a returned event. Surrounding whitespace is trimmed; blank means no filter. Leading zeros are significant. Keep year supplied.',
+      ),
     year: z
       .number()
       .int()
@@ -139,6 +149,18 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
               .string()
               .describe('Event start as NCEI writes it, e.g. "30-APR-24 20:33:00".'),
             endDateTime: z.string().optional().describe('Event end. Omitted when not provided.'),
+            beginDate: z
+              .string()
+              .optional()
+              .describe(
+                'Local ISO calendar start date (YYYY-MM-DD), usable with CDO date filters. Omitted when source components are missing or invalid.',
+              ),
+            endDate: z
+              .string()
+              .optional()
+              .describe(
+                'Local ISO calendar end date (YYYY-MM-DD). Omitted when source components are missing or invalid; not a UTC conversion.',
+              ),
             timezone: z
               .string()
               .optional()
@@ -209,11 +231,11 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
               .describe(
                 'Who reported the event, e.g. "ASOS", "Trained Spotter". Omitted when absent.',
               ),
-            episodeNarrative: z
+            episodeNarrativeRef: z
               .string()
               .optional()
               .describe(
-                'Narrative for the whole storm episode, shared by every event in it. Omitted when absent.',
+                'Reference to this page’s episodeNarratives text. Omitted when no narrative was reported.',
               ),
             eventNarrative: z
               .string()
@@ -223,6 +245,20 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
           .describe('A single storm event.'),
       )
       .describe('Matching events for the requested page, in the source file’s own row order.'),
+    episodeNarratives: z
+      .array(
+        z
+          .object({
+            ref: z.string().describe('Page-local narrative reference, e.g. n1.'),
+            text: z
+              .string()
+              .describe('Distinct nonblank episode narrative text, preserved from the service.'),
+          })
+          .describe('One distinct episode narrative on this page.'),
+      )
+      .describe(
+        'Each distinct episode narrative on this page, once; referenced by events[].episodeNarrativeRef.',
+      ),
   }),
 
   enrichment: {
@@ -286,6 +322,7 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
   ],
 
   async handler(input, ctx) {
+    const episodeId = input.episodeId?.trim();
     ctx.log.info('Searching storm events', {
       year: input.year,
       state: input.state,
@@ -296,6 +333,7 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
     const result = await getStormEventsService().search(
       {
         year: input.year,
+        ...(episodeId && { episodeId }),
         ...(input.state !== undefined && { state: input.state }),
         ...(input.eventType !== undefined && { eventType: input.eventType }),
         ...(input.month !== undefined && { month: input.month }),
@@ -320,7 +358,7 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
         `Page is empty because offset ${input.offset} is past the end of ${result.totalCount} matching events in ${input.year}. Lower offset or reset it to 0.`,
       );
     } else if (result.totalCount === 0) {
-      ctx.enrich.notice(emptyNotice(input, result));
+      ctx.enrich.notice(emptyNotice({ ...input, episodeId }, result));
     } else if (result.totalCount > input.offset + result.events.length) {
       ctx.enrich.truncated({
         shown: result.events.length,
@@ -329,7 +367,19 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       });
     }
 
-    return { year: input.year, sourceFile: result.sourceFile, events: result.events };
+    const refs = new Map<string, string>();
+    const episodeNarratives: { ref: string; text: string }[] = [];
+    const events = result.events.map(({ episodeNarrative, ...event }) => {
+      if (!episodeNarrative?.trim()) return event;
+      let ref = refs.get(episodeNarrative);
+      if (!ref) {
+        ref = `n${refs.size + 1}`;
+        refs.set(episodeNarrative, ref);
+        episodeNarratives.push({ ref, text: episodeNarrative });
+      }
+      return { ...event, episodeNarrativeRef: ref };
+    });
+    return { year: input.year, sourceFile: result.sourceFile, events, episodeNarratives };
   },
 
   format(result) {
@@ -353,6 +403,8 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       if (event.endDateTime) when.push(`– ${event.endDateTime}`);
       if (event.timezone) when.push(`(${event.timezone})`);
       lines.push(when.join(' '));
+      if (event.beginDate) lines.push(`**Begin date (local):** ${event.beginDate}`);
+      if (event.endDate) lines.push(`**End date (local):** ${event.endDate}`);
 
       if (event.magnitude !== undefined) {
         lines.push(`**Magnitude:** ${event.magnitude} (knots for wind, inches for hail)`);
@@ -378,10 +430,14 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
         );
       }
       if (event.source) lines.push(`**Reported by:** ${event.source}`);
-      if (event.episodeNarrative) lines.push(`**Episode narrative:** ${event.episodeNarrative}`);
+      if (event.episodeNarrativeRef)
+        lines.push(`**Episode narrative:** ${event.episodeNarrativeRef}`);
       if (event.eventNarrative) lines.push(`**Event narrative:** ${event.eventNarrative}`);
     }
 
+    for (const narrative of result.episodeNarratives) {
+      lines.push('', `**Episode narrative ${narrative.ref}:** ${narrative.text}`);
+    }
     return [{ type: 'text', text: lines.join('\n') }];
   },
 });
@@ -407,6 +463,7 @@ function renderDamage(damage: z.infer<typeof damageSchema> | undefined): string 
 function emptyNotice(
   input: {
     year: number;
+    episodeId?: string | undefined;
     state?: string | undefined;
     eventType?: string | undefined;
     month?: number | undefined;
@@ -418,6 +475,7 @@ function emptyNotice(
   >,
 ): string {
   const applied: string[] = [];
+  if (input.episodeId) applied.push(`episodeId="${input.episodeId}"`);
   if (input.state) applied.push(`state="${input.state}"`);
   if (input.eventType) applied.push(`eventType="${input.eventType}"`);
   if (input.month !== undefined) applied.push(`month=${input.month}`);
@@ -462,6 +520,7 @@ function emptyNotice(
     if (input.state) present.push(`state="${input.state}"`);
 
     const narrowing: string[] = [];
+    if (input.episodeId) narrowing.push(`episodeId="${input.episodeId}"`);
     if (input.month !== undefined) narrowing.push(`month=${input.month}`);
     if (input.minDamageInUsd !== undefined)
       narrowing.push(`minDamageInUsd=${input.minDamageInUsd}`);

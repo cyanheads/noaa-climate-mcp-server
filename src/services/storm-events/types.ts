@@ -26,6 +26,8 @@ export type StormEvent = {
   countyOrZone?: string;
   countyOrZoneType?: string;
   beginDateTime: string;
+  beginDate?: string;
+  endDate?: string;
   endDateTime?: string;
   timezone?: string;
   magnitude?: number;
@@ -49,6 +51,8 @@ export type StormEvent = {
 
 /** Filters and paging for one Storm Events search. */
 export type StormEventsQuery = {
+  /** Exact EPISODE_ID digit string; leading zeros remain significant. */
+  episodeId?: string;
   /** Calendar year; each year is a separate upstream file. */
   year: number;
   /** Full upper-case state or territory name as NCEI writes it, matched case-insensitively. */

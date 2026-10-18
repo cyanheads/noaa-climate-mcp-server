@@ -185,12 +185,12 @@ describe('noaaClimateFindStations — format output', () => {
     expect(firstText(blocks)).toContain('No records on this page.');
   });
 
-  it('format includes data coverage percentage', () => {
+  it('format includes fractional data coverage', () => {
     const blocks = noaaClimateFindStations.format!({
       results: [defaultStation],
       metadata: { resultset: { count: 1, limit: 25, offset: 0 } },
     });
-    expect(firstText(blocks)).toContain('99%');
+    expect(firstText(blocks)).toContain('**Coverage (0–1):** 0.99');
   });
 
   it('format includes data range when both mindate and maxdate are present', () => {

@@ -44,6 +44,13 @@ beforeEach(() => {
 });
 
 describe('noaaClimateListDatasets', () => {
+  it.each([0, 0.9969, 1])('preserves fractional coverage %s', (datacoverage) => {
+    expect(
+      firstText(
+        noaaClimateListDatasets.format!({ results: [{ ...mockDatasets[0]!, datacoverage }] }),
+      ),
+    ).toContain(`**Coverage (0–1):** ${datacoverage}`);
+  });
   it('returns dataset results with metadata', async () => {
     const ctx = createMockContext({ errors: noaaClimateListDatasets.errors });
     const input = noaaClimateListDatasets.input.parse({});
@@ -110,7 +117,7 @@ describe('noaaClimateListDatasets', () => {
     expect(text).toContain('Daily Summaries');
     expect(text).toContain('1763-01-01');
     expect(text).toContain('2024-12-31');
-    expect(text).toContain('100%');
+    expect(text).toContain('**Coverage (0–1):** 1');
     expect(text).toContain('0'); // offset
   });
 

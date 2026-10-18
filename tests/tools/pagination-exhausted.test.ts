@@ -20,6 +20,7 @@ vi.mock('@/services/cdo/cdo-service.js', () => ({
 }));
 
 import { getCdoService } from '@/services/cdo/cdo-service.js';
+import { firstText } from '../helpers/content.js';
 
 const TOTAL = 51;
 
@@ -47,7 +48,11 @@ function cdoPager(total = TOTAL) {
     if (offset >= total) return {};
     const n = Math.max(0, Math.min(limit, total - offset));
     return {
-      results: Array.from({ length: n }, () => ({ ...RECORD })),
+      results: Array.from({ length: n }, (_, index) => ({
+        ...RECORD,
+        id: `record-${offset + index}`,
+        station: `GHCND:record-${offset + index}`,
+      })),
       metadata: { resultset: { count: total, limit, offset: offset + 1 } },
     };
   });
@@ -227,6 +232,38 @@ describe.each(TOOLS)('$name — genuine no-match', ({ def, method, args, noticeM
 });
 
 describe.each(TOOLS)('$name — populated page', ({ def, method, args }) => {
+  it.each([0, 10])(
+    'echoes zero-based offset %s on both surfaces without changing the page',
+    async (offset) => {
+      const impl = install(method, cdoPager());
+      const ctx = createMockContext({ errors: def.errors });
+      const input = def.input.parse({ ...args, limit: 3, offset });
+      const result = await def.handler(input as never, ctx as never);
+      expect(result.metadata?.resultset).toEqual({ count: TOTAL, limit: 3, offset });
+      expect(result.results.map((record) => ('id' in record ? record.id : record.station))).toEqual(
+        Array.from({ length: 3 }, (_, index) =>
+          method === 'fetchData' ? `GHCND:record-${offset + index}` : `record-${offset + index}`,
+        ),
+      );
+      expect(firstText(def.format!(result as never))).toContain(`**Offset:** ${offset}`);
+      expect(impl).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('keeps metadata absent on populated metadata-less pages', async () => {
+    const impl = vi.fn(async () => ({ results: [RECORD] }));
+    vi.mocked(getCdoService).mockReturnValue({ [method]: impl } as unknown as ReturnType<
+      typeof getCdoService
+    >);
+    const input = def.input.parse({ ...args, limit: 3, offset: 10 });
+    const result = await def.handler(
+      input as never,
+      createMockContext({ errors: def.errors }) as never,
+    );
+    expect(result.metadata).toBeUndefined();
+    expect(firstText(def.format!(result as never))).not.toContain('**Offset:**');
+    expect(impl).toHaveBeenCalledTimes(1);
+  });
   it('makes no probe and emits no notice', async () => {
     const impl = install(method, cdoPager());
     const ctx = createMockContext({ errors: def.errors });

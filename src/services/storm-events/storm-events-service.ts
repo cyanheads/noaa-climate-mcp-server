@@ -15,6 +15,7 @@ import {
 } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { CsvStreamReader } from '@/services/csv/csv-stream-reader.js';
+import { explainUpstreamFailure } from '@/services/upstream-failure.js';
 import { parseDamageEstimate } from './damage.js';
 import type { StormEvent, StormEventsQuery, StormEventsSearchResult } from './types.js';
 
@@ -142,6 +143,7 @@ export class StormEventsService {
 
     const stateNeedle = query.state?.trim().toLowerCase();
     const eventTypeNeedle = query.eventType?.trim().toLowerCase();
+    const episodeNeedle = query.episodeId?.trim();
 
     const events: StormEvent[] = [];
     const eventTypesInYear = new Set<string>();
@@ -170,6 +172,7 @@ export class StormEventsService {
 
       if (stateNeedle !== undefined && state.toLowerCase() !== stateNeedle) return;
       if (eventTypeNeedle !== undefined && eventType.toLowerCase() !== eventTypeNeedle) return;
+      if (episodeNeedle && cell('EPISODE_ID') !== episodeNeedle) return;
       if (
         query.month !== undefined &&
         Number(cell('BEGIN_YEARMONTH').slice(4, 6)) !== query.month
@@ -232,7 +235,8 @@ export class StormEventsService {
     try {
       return { year, sourceFile, bytes: await this.loadYear(year, sourceFile, ctx) };
     } catch (error) {
-      if (!isMissingUpstreamFile(error)) throw error;
+      if (!isMissingUpstreamFile(error))
+        throw explainUpstreamFailure(error, 'NCEI Storm Events year download');
       ctx.log.debug('Cached Storm Events filename is gone; re-resolving the listing', {
         year,
         sourceFile,
@@ -244,7 +248,8 @@ export class StormEventsService {
     try {
       return { year, sourceFile: republished, bytes: await this.loadYear(year, republished, ctx) };
     } catch (error) {
-      if (!isMissingUpstreamFile(error)) throw error;
+      if (!isMissingUpstreamFile(error))
+        throw explainUpstreamFailure(error, 'NCEI Storm Events year download');
       throw serviceUnavailable(
         `The NCEI Storm Events directory lists a ${year} details file that the server will not serve. The year is published but its bundle is not downloadable right now.`,
         { reason: 'service_unavailable', year, sourceFile: republished },
@@ -280,7 +285,8 @@ export class StormEventsService {
       // A 404 on the index is the bulk server being unavailable, not a missing
       // resource the caller asked for — and the raw message names the internal
       // URL, which is no use to an agent deciding what to do next.
-      if (!isMissingUpstreamFile(error)) throw error;
+      if (!isMissingUpstreamFile(error))
+        throw explainUpstreamFailure(error, 'NCEI Storm Events directory listing');
       throw serviceUnavailable(
         'The NCEI Storm Events directory index is not being served right now, so no year can be resolved.',
         { reason: 'service_unavailable' },
@@ -434,6 +440,8 @@ function projectEvent(
   const countyOrZone = toText(cell('CZ_NAME'));
   const countyOrZoneType = toText(cell('CZ_TYPE'));
   const endDateTime = toText(cell('END_DATE_TIME'));
+  const beginDate = localCalendarDate(cell('BEGIN_YEARMONTH'), cell('BEGIN_DAY'));
+  const endDate = localCalendarDate(cell('END_YEARMONTH'), cell('END_DAY'));
   const timezone = toText(cell('CZ_TIMEZONE'));
   const magnitude = toNumber(cell('MAGNITUDE'));
   const magnitudeType = toText(cell('MAGNITUDE_TYPE'));
@@ -456,6 +464,8 @@ function projectEvent(
     eventType: cell('EVENT_TYPE'),
     state: cell('STATE'),
     beginDateTime: cell('BEGIN_DATE_TIME'),
+    ...(beginDate && { beginDate }),
+    ...(endDate && { endDate }),
     ...(episodeId && { episodeId }),
     ...(countyOrZone && { countyOrZone }),
     ...(countyOrZoneType && { countyOrZoneType }),
@@ -479,6 +489,22 @@ function projectEvent(
     ...(episodeNarrative && { episodeNarrative }),
     ...(eventNarrative && { eventNarrative }),
   };
+}
+
+/** Build a valid local calendar date from the export's four-digit year and day. */
+function localCalendarDate(yearMonth: string, dayCell: string): string | undefined {
+  if (!/^\d{6}$/.test(yearMonth) || !/^\d{1,2}$/.test(dayCell)) return undefined;
+  const year = Number(yearMonth.slice(0, 4));
+  const month = Number(yearMonth.slice(4));
+  const day = Number(dayCell);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  )
+    return undefined;
+  return `${yearMonth.slice(0, 4)}-${yearMonth.slice(4)}-${dayCell.padStart(2, '0')}`;
 }
 
 // --- Init/accessor pattern ---

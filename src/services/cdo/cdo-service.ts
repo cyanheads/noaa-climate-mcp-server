@@ -8,6 +8,7 @@ import type { Context } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
+import { explainUpstreamFailure } from '@/services/upstream-failure.js';
 import type {
   CdoCollectionResponse,
   CdoDataCategory,
@@ -90,7 +91,7 @@ const UNEXPLAINED_FAILURE_HINT =
 function explainCdoFailure(error: unknown, path: string): unknown {
   if (!(error instanceof McpError)) return error;
   const status = error.data?.status;
-  if (typeof status !== 'number') return error;
+  if (typeof status !== 'number') return explainUpstreamFailure(error, `NOAA CDO /${path}`);
 
   const upstreamMessage = extractUpstreamMessage(error.data?.body);
   const message = upstreamMessage

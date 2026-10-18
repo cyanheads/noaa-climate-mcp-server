@@ -185,7 +185,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
             limit: z.number().describe('Page size used for this response.'),
             offset: z
               .number()
-              .describe('1-based starting index of this page as returned by the NOAA CDO API.'),
+              .describe('Zero-based starting index of this page, echoing the requested offset.'),
           })
           .describe('Pagination cursor fields for this response.'),
       })
@@ -398,7 +398,10 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       results,
       // input.includemetadata gates only this tool's output. Never synthesize a
       // metadata object CDO did not send (an exhausted page carries none).
-      ...(input.includemetadata && response.metadata && { metadata: response.metadata }),
+      ...(input.includemetadata &&
+        response.metadata && {
+          metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+        }),
     };
   },
 

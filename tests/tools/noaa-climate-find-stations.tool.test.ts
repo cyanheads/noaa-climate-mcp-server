@@ -42,6 +42,30 @@ beforeEach(() => {
 });
 
 describe('noaaClimateFindStations', () => {
+  it.each([0, 0.9969, 1])(
+    'preserves coordinate and coverage precision %s on both surfaces',
+    async (datacoverage) => {
+      vi.mocked(getCdoService).mockReturnValue({
+        findStations: vi.fn().mockResolvedValue({
+          results: [
+            { ...mockStations[0], latitude: 47.44467, longitude: -122.31442, datacoverage },
+          ],
+        }),
+      } as unknown as ReturnType<typeof getCdoService>);
+      const result = await noaaClimateFindStations.handler(
+        noaaClimateFindStations.input.parse({}),
+        createMockContext({ errors: noaaClimateFindStations.errors }),
+      );
+      expect(result.results[0]).toMatchObject({
+        latitude: 47.44467,
+        longitude: -122.31442,
+        datacoverage,
+      });
+      const text = firstText(noaaClimateFindStations.format!(result));
+      expect(text).toContain('47.44467, -122.31442');
+      expect(text).toContain(`**Coverage (0–1):** ${datacoverage}`);
+    },
+  );
   it('returns station results with coordinates and coverage', async () => {
     const ctx = createMockContext({ errors: noaaClimateFindStations.errors });
     const input = noaaClimateFindStations.input.parse({

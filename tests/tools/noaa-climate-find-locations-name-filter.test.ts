@@ -404,7 +404,7 @@ describe('nameContains — input schema', () => {
 });
 
 describe('nameContains omitted — unfiltered path unchanged', () => {
-  it('makes exactly one upstream fetch at the caller pagination and relays CDO metadata', async () => {
+  it('makes exactly one upstream fetch and echoes the caller pagination', async () => {
     const impl = installCategory(CITY_COUNT);
     const ctx = createMockContext({ errors: noaaClimateFindLocations.errors });
     const input = noaaClimateFindLocations.input.parse({
@@ -418,7 +418,7 @@ describe('nameContains omitted — unfiltered path unchanged', () => {
     expect(impl).toHaveBeenCalledTimes(1);
     expect(impl.mock.calls[0]![0]).toMatchObject({ limit: 5, offset: 10 });
     expect(result.results).toHaveLength(5);
-    expect(result.metadata?.resultset).toEqual({ count: CITY_COUNT, limit: 5, offset: 11 });
+    expect(result.metadata?.resultset).toEqual({ count: CITY_COUNT, limit: 5, offset: 10 });
     expect(getEnrichment(ctx).totalCount).toBe(CITY_COUNT);
   });
 });

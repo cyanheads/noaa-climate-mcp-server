@@ -113,14 +113,14 @@ describe('noaa_climate_fetch_data — includemetadata decoupling', () => {
     expect(text).toContain('GHCND:USC00450482');
   });
 
-  it('returns the upstream metadata object when includemetadata is true', async () => {
+  it('returns metadata with the caller offset when includemetadata is true', async () => {
     mockService();
     const ctx = createMockContext({ errors: noaaClimateFetchData.errors });
     const input = noaaClimateFetchData.input.parse({ ...base, limit: 2, includemetadata: true });
 
     const result = await noaaClimateFetchData.handler(input, ctx);
 
-    expect(result.metadata).toEqual({ resultset: { count: TOTAL, limit: 2, offset: 1 } });
+    expect(result.metadata).toEqual({ resultset: { count: TOTAL, limit: 2, offset: 0 } });
     expect(getEnrichment(ctx).totalCount).toBe(TOTAL);
   });
 

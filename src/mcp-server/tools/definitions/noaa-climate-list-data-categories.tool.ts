@@ -74,7 +74,7 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
             limit: z.number().describe('Page size used for this response.'),
             offset: z
               .number()
-              .describe('1-based starting index of this page as returned by the NOAA CDO API.'),
+              .describe('Zero-based starting index of this page, echoing the requested offset.'),
           })
           .describe('Pagination cursor fields for this response.'),
       })
@@ -191,7 +191,9 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
 
     return {
       results,
-      metadata: response.metadata,
+      ...(response.metadata && {
+        metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+      }),
     };
   },
 

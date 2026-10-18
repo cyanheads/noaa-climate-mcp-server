@@ -137,9 +137,7 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
             limit: z.number().describe('Page size used for this response.'),
             offset: z
               .number()
-              .describe(
-                'Starting index of this page: 1-based as returned by the NOAA CDO API, or the zero-based offset you supplied when appliedNameFilter is present.',
-              ),
+              .describe('Zero-based starting index of this page, echoing the requested offset.'),
           })
           .describe('Pagination cursor fields for this response.'),
       })
@@ -357,7 +355,9 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
 
     return {
       results,
-      metadata: response.metadata,
+      ...(response.metadata && {
+        metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+      }),
     };
   },
 
@@ -382,9 +382,7 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
     for (const loc of result.results) {
       const datePart = loc.mindate && loc.maxdate ? ` | ${loc.mindate} – ${loc.maxdate}` : '';
       const coveragePart =
-        typeof loc.datacoverage === 'number'
-          ? ` | Coverage: ${(loc.datacoverage * 100).toFixed(0)}%`
-          : '';
+        typeof loc.datacoverage === 'number' ? ` | Coverage (0–1): ${loc.datacoverage}` : '';
       lines.push(`- **\`${loc.id}\`** — ${loc.name}${datePart}${coveragePart}`);
     }
     return [{ type: 'text', text: lines.join('\n') }];

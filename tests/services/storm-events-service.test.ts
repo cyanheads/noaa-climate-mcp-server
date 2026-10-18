@@ -353,6 +353,48 @@ describe('StormEventsService — damage values', () => {
 });
 
 describe('StormEventsService — filtering', () => {
+  it('matches episode IDs literally before counts and pagination', async () => {
+    const service = new StormEventsService(BASE);
+    const result = await service.search(
+      { ...baseQuery, year: 2024, episodeId: '190993', state: 'TEXAS', limit: 1 },
+      createMockContext(),
+    );
+    expect(result.totalCount).toBe(1);
+    expect(result.events.map((event) => event.eventId)).toEqual(['1182258']);
+    const unmatched = await service.search(
+      { ...baseQuery, year: 2024, episodeId: '0190993' },
+      createMockContext(),
+    );
+    expect(unmatched.totalCount).toBe(0);
+    expect(unmatched.events).toEqual([]);
+  });
+
+  it.each([
+    ['202402', '9', '202403', '1', '2024-02-09', '2024-03-01'],
+    ['199512', '31', '199601', '1', '1995-12-31', '1996-01-01'],
+    ['202402', '29', '', '', '2024-02-29', undefined],
+    ['202302', '29', '202413', '1', undefined, undefined],
+    ['202404', '31', '202401', '0', undefined, undefined],
+    ['', '1', '202401', '', undefined, undefined],
+  ])(
+    'projects valid local calendar pairs %s/%s through %s/%s',
+    async (ym, day, endYm, endDay, beginDate, endDate) => {
+      const header = `${HEADER},BEGIN_DAY,END_YEARMONTH,END_DAY`;
+      const row = `${ROWS[0]?.replace(/^202409/, ym)},${day},${endYm},${endDay}`;
+      routeFetch({
+        [`${BASE}StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz`]: () =>
+          gzipResponse(`${header}\r\n${row}\r\n`),
+      });
+      const result = await new StormEventsService(BASE).search(
+        { ...baseQuery, year: 2024 },
+        createMockContext(),
+      );
+      expect(result.events[0]?.beginDate).toBe(beginDate);
+      expect(result.events[0]?.endDate).toBe(endDate);
+      expect(result.events[0]?.beginDateTime).toBe('26-SEP-24 16:00:00');
+      expect(result.events[0]?.timezone).toBe('EST-5');
+    },
+  );
   it('filters by state case-insensitively', async () => {
     const service = new StormEventsService(BASE);
     const upper = await service.search(

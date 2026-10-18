@@ -83,7 +83,7 @@ export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
             limit: z.number().describe('Page size used for this response.'),
             offset: z
               .number()
-              .describe('1-based starting index of this page as returned by the NOAA CDO API.'),
+              .describe('Zero-based starting index of this page, echoing the requested offset.'),
           })
           .describe('Pagination cursor fields for this response.'),
       })
@@ -198,7 +198,9 @@ export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
 
     return {
       results,
-      metadata: response.metadata,
+      ...(response.metadata && {
+        metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+      }),
     };
   },
 
@@ -218,7 +220,7 @@ export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
     for (const ds of result.results) {
       lines.push(`## ${ds.name} (\`${ds.id}\`)`);
       lines.push(
-        `**Coverage:** ${(ds.datacoverage * 100).toFixed(0)}% | **Date range:** ${ds.mindate} – ${ds.maxdate}`,
+        `**Coverage (0–1):** ${ds.datacoverage} | **Date range:** ${ds.mindate} – ${ds.maxdate}`,
       );
     }
     return [{ type: 'text', text: lines.join('\n') }];

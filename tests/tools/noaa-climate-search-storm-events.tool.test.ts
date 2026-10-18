@@ -206,6 +206,79 @@ describe('noaaClimateSearchStormEvents — input contract', () => {
 });
 
 describe('noaaClimateSearchStormEvents — structuredContent', () => {
+  it('deduplicates narrative text per page without relying on episode IDs', async () => {
+    mockSearch(
+      searchResult({
+        events: [
+          helene,
+          { ...helene, eventId: '2' },
+          { ...helene, eventId: '3', episodeNarrative: 'Different text.' },
+          { ...sparse, episodeNarrative: helene.episodeNarrative! },
+        ],
+        totalCount: 4,
+      }),
+    );
+    const { result } = await run({ year: 2024 });
+    expect(result.episodeNarratives).toEqual([
+      { ref: 'n1', text: helene.episodeNarrative },
+      { ref: 'n2', text: 'Different text.' },
+    ]);
+    expect(result.events.map((event) => event.episodeNarrativeRef)).toEqual([
+      'n1',
+      'n1',
+      'n2',
+      'n1',
+    ]);
+    expect(result.events.every((event) => !('episodeNarrative' in event))).toBe(true);
+    const text = firstText(noaaClimateSearchStormEvents.format!(result));
+    expect(text.split(helene.episodeNarrative!).length - 1).toBe(1);
+    expect(text).toContain('n1');
+    expect(text).toContain(helene.eventNarrative);
+  });
+
+  it.each(['', '   ', ' 00123 ', '0', '9'.repeat(200)])(
+    'normalizes the episode filter %j without numeric coercion',
+    async (episodeId) => {
+      await run({ year: 2024, episodeId });
+      expect(search.mock.calls[0]?.[0]).toEqual({
+        year: 2024,
+        limit: 50,
+        offset: 0,
+        ...(episodeId.trim() ? { episodeId: episodeId.trim() } : {}),
+      });
+    },
+  );
+
+  it.each(['-1', '1.2', 'abc', '1 2'])('rejects malformed episode ID %s', (episodeId) => {
+    expect(noaaClimateSearchStormEvents.input.safeParse({ year: 2024, episodeId }).success).toBe(
+      false,
+    );
+  });
+
+  it('names an unmatched episode and year without claiming exhaustion', async () => {
+    mockSearch(searchResult({ events: [], totalCount: 0 }));
+    const { ctx, result } = await run({ year: 2024, episodeId: '123', offset: 99 });
+    expect(getEnrichment(ctx).notice).toContain('episodeId="123"');
+    expect(getEnrichment(ctx).notice).toContain('2024');
+    expect(getEnrichment(ctx).exhausted).toBeUndefined();
+    expect(result.episodeNarratives).toEqual([]);
+  });
+
+  it('carries local ISO dates through both surfaces without replacing raw timing', async () => {
+    mockSearch(
+      searchResult({
+        events: [{ ...helene, beginDate: '2024-09-26', endDate: '2024-09-27' }],
+        totalCount: 1,
+      }),
+    );
+    const { result } = await run({ year: 2024 });
+    expect(result.events[0]?.beginDate).toBe('2024-09-26');
+    expect(result.events[0]?.endDate).toBe('2024-09-27');
+    const text = firstText(noaaClimateSearchStormEvents.format!(result));
+    expect(text).toContain('2024-09-26');
+    expect(text).toContain('2024-09-27');
+    expect(text).toContain(helene.beginDateTime);
+  });
   it('returns the year, the exact source file, and the matching events', async () => {
     const { result } = await run({ year: 2024 });
 
@@ -409,6 +482,7 @@ describe('noaaClimateSearchStormEvents — an H-magnitude damage figure', () => 
         year: 1995,
         sourceFile: 'StormEvents_details-ftp_v1.0_d1995_c20260323.csv.gz',
         events: [hundreds],
+        episodeNarratives: [],
       }),
     );
 
@@ -418,10 +492,22 @@ describe('noaaClimateSearchStormEvents — an H-magnitude damage figure', () => 
 });
 
 describe('noaaClimateSearchStormEvents — format()', () => {
-  const rendered = (events: StormEvent[] = [helene, tornado, sparse]) =>
-    firstText(
-      noaaClimateSearchStormEvents.format!({ year: 2024, sourceFile: SOURCE_FILE, events }),
+  const rendered = (events: StormEvent[] = [helene, tornado, sparse]) => {
+    const episodeNarratives = events.flatMap((event, index) =>
+      event.episodeNarrative ? [{ ref: `n${index + 1}`, text: event.episodeNarrative }] : [],
     );
+    return firstText(
+      noaaClimateSearchStormEvents.format!({
+        year: 2024,
+        sourceFile: SOURCE_FILE,
+        events: events.map(({ episodeNarrative, ...event }, index) => ({
+          ...event,
+          ...(episodeNarrative && { episodeNarrativeRef: `n${index + 1}` }),
+        })),
+        episodeNarratives,
+      }),
+    );
+  };
 
   it('names the year and the exact source file', () => {
     const text = rendered();

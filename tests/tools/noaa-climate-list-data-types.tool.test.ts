@@ -35,6 +35,15 @@ beforeEach(() => {
 });
 
 describe('noaaClimateListDataTypes', () => {
+  it.each([0, 0.9969, 1])('preserves fractional coverage %s', (datacoverage) => {
+    expect(
+      firstText(
+        noaaClimateListDataTypes.format!({
+          results: [{ id: 'TMAX', name: 'Maximum temperature', datacoverage }],
+        }),
+      ),
+    ).toContain(`**Coverage (0–1):** ${datacoverage}`);
+  });
   it('returns data type results with optional fields', async () => {
     const ctx = createMockContext({ errors: noaaClimateListDataTypes.errors });
     const input = noaaClimateListDataTypes.input.parse({ datasetId: 'GHCND' });
@@ -96,7 +105,7 @@ describe('noaaClimateListDataTypes', () => {
     const text = firstText(blocks);
     expect(text).toContain('TMAX');
     expect(text).toContain('Maximum temperature');
-    expect(text).toContain('99%');
+    expect(text).toContain('**Coverage (0–1):** 0.99');
     expect(text).toContain('0'); // offset
   });
 

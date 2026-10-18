@@ -135,7 +135,7 @@ export const noaaClimateGetStation = tool('noaa_climate_get_station', {
     lines.push(`## ${result.name} (\`${result.id}\`)`);
 
     if (typeof result.latitude === 'number' && typeof result.longitude === 'number') {
-      lines.push(`**Coordinates:** ${result.latitude.toFixed(4)}, ${result.longitude.toFixed(4)}`);
+      lines.push(`**Coordinates:** ${result.latitude}, ${result.longitude}`);
     } else {
       lines.push('**Coordinates:** Not available');
     }
@@ -155,7 +155,7 @@ export const noaaClimateGetStation = tool('noaa_climate_get_station', {
     }
 
     if (typeof result.datacoverage === 'number') {
-      lines.push(`**Coverage:** ${(result.datacoverage * 100).toFixed(0)}%`);
+      lines.push(`**Coverage (0–1):** ${result.datacoverage}`);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

@@ -35,6 +35,15 @@ beforeEach(() => {
 });
 
 describe('noaaClimateFindLocations', () => {
+  it.each([0, 0.9969, 1])('preserves fractional coverage %s', (datacoverage) => {
+    expect(
+      firstText(
+        noaaClimateFindLocations.format!({
+          results: [{ id: 'FIPS:37', name: 'North Carolina', datacoverage }],
+        }),
+      ),
+    ).toContain(`Coverage (0–1): ${datacoverage}`);
+  });
   it('returns location results', async () => {
     const ctx = createMockContext({ errors: noaaClimateFindLocations.errors });
     const input = noaaClimateFindLocations.input.parse({ locationCategoryId: 'ST' });

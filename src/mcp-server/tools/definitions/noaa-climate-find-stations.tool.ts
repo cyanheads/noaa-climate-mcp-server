@@ -118,7 +118,7 @@ export const noaaClimateFindStations = tool('noaa_climate_find_stations', {
             limit: z.number().describe('Page size used for this response.'),
             offset: z
               .number()
-              .describe('1-based starting index of this page as returned by the NOAA CDO API.'),
+              .describe('Zero-based starting index of this page, echoing the requested offset.'),
           })
           .describe('Pagination cursor fields for this response.'),
       })
@@ -253,7 +253,9 @@ export const noaaClimateFindStations = tool('noaa_climate_find_stations', {
 
     return {
       results,
-      metadata: response.metadata,
+      ...(response.metadata && {
+        metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+      }),
     };
   },
 
@@ -274,7 +276,7 @@ export const noaaClimateFindStations = tool('noaa_climate_find_stations', {
       lines.push(`## ${st.name} (\`${st.id}\`)`);
       const coordParts: string[] = [];
       if (typeof st.latitude === 'number' && typeof st.longitude === 'number') {
-        coordParts.push(`${st.latitude.toFixed(4)}, ${st.longitude.toFixed(4)}`);
+        coordParts.push(`${st.latitude}, ${st.longitude}`);
       }
       if (typeof st.elevation === 'number') {
         coordParts.push(`elev ${st.elevation}${st.elevationUnit ? ` ${st.elevationUnit}` : ''}`);
@@ -284,7 +286,7 @@ export const noaaClimateFindStations = tool('noaa_climate_find_stations', {
         lines.push(`**Data range:** ${st.mindate} – ${st.maxdate}`);
       }
       if (typeof st.datacoverage === 'number') {
-        lines.push(`**Coverage:** ${(st.datacoverage * 100).toFixed(0)}%`);
+        lines.push(`**Coverage (0–1):** ${st.datacoverage}`);
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

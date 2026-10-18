@@ -5,7 +5,7 @@
  * @module tests/services/cdo-error-explanation.test
  */
 
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -22,7 +22,9 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => {
   };
 });
 
+import { BillionDollarDisastersService } from '@/services/billion-dollar-disasters/billion-dollar-disasters-service.js';
 import { CdoService } from '@/services/cdo/cdo-service.js';
+import { StormEventsService } from '@/services/storm-events/storm-events-service.js';
 
 const BASE_URL = 'https://mock-cdo.test/v2';
 
@@ -190,5 +192,78 @@ describe('CdoService — upstream failure explanation', () => {
 
     expect(error.message).not.toContain('mock-cdo.test');
     expect(error.data?.upstreamMessage).toBeUndefined();
+  });
+});
+
+describe.each([
+  {
+    operation: 'NOAA CDO',
+    timeoutMs: 15_000,
+    run: () => new CdoService(BASE_URL).listDatasets({}, createMockContext()),
+  },
+  {
+    operation: 'Storm Events directory',
+    timeoutMs: 15_000,
+    run: () => new StormEventsService(BASE_URL).resolveDetailsFile(2024, createMockContext()),
+  },
+  {
+    operation: 'billion-dollar disasters export',
+    timeoutMs: 20_000,
+    run: () =>
+      new BillionDollarDisastersService(BASE_URL).searchEvents(
+        { limit: 1, offset: 0 },
+        createMockContext(),
+      ),
+  },
+])('$operation — transport explanation', ({ operation, timeoutMs, run }) => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('names the operation on a rejected fetch, preserving the network code', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
+    const error = await run().catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(McpError);
+    expect(error).toMatchObject({ code: JsonRpcErrorCode.ServiceUnavailable });
+    expect((error as McpError).message).toContain(operation);
+    expect((error as McpError).message).not.toContain('https://');
+  });
+
+  it('names a timeout without changing its code or routing', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: unknown, init: RequestInit) =>
+          new Promise((_resolve, reject) =>
+            init.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true,
+            }),
+          ),
+      ),
+    );
+    const pending = run().catch((cause: unknown) => cause);
+    await vi.advanceTimersByTimeAsync(timeoutMs + 1);
+    const error = (await pending) as McpError;
+    expect(error.code).toBe(JsonRpcErrorCode.Timeout);
+    expect(error.message).toContain(operation);
+    expect(error.message).toContain('timed out');
+    expect(error.message).not.toContain('https://');
+    expect(error.data?.reason).toBeUndefined();
+  });
+
+  it('names HTTP failure while preserving status and body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('upstream down', { status: 503 })),
+    );
+    const error = (await run().catch((cause: unknown) => cause)) as McpError;
+    expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect(error.data?.status).toBe(503);
+    expect(error.data?.body).toBe('upstream down');
+    expect(error.message).toContain(operation);
+    expect(error.message).toContain('503');
+    expect(error.message).not.toContain('https://');
   });
 });

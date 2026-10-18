@@ -177,11 +177,11 @@ describe('noaaClimateFindLocations — format edge cases', () => {
     expect(text).not.toContain(' – '); // no date range separator
   });
 
-  it('formats coverage as a percentage when present', () => {
+  it('formats coverage as a fraction when present', () => {
     const blocks = noaaClimateFindLocations.format!({
       results: [{ id: 'FIPS:37', name: 'North Carolina', datacoverage: 1 }],
     });
-    expect(firstText(blocks)).toContain('100%');
+    expect(firstText(blocks)).toContain('Coverage (0–1): 1');
   });
 
   it('formats date range when both mindate and maxdate are present', () => {

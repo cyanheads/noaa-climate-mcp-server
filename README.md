@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.6.5-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.6.5-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.3-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -29,7 +29,7 @@
 
 ## Overview
 
-NOAA Climate Data Online (CDO) API v2 for historical weather observations, plus two separate NCEI bulk-CSV corpora — the Storm Events Database and Billion-Dollar Weather and Climate Disasters. Search locations and stations, fetch historical observations with date-range validation and unit conversion, and query severe-weather events or disaster costs from any MCP client. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+Historical weather and climate records from NOAA: station observations from Climate Data Online, the Storm Events Database, and Billion-Dollar Weather and Climate Disasters. Find stations, pull observations in the units you want, and look up storm damage or disaster costs.
 
 ### Tools
 
@@ -115,7 +115,8 @@ NOAA Climate Data Online (CDO) API v2 for historical weather observations, plus 
 
 ### `noaa_climate_search_storm_events` <sub>tool</sub>
 
-- No token required; `year` is required (1950 through the current partial year); filter by `state` (the full NCEI name, e.g. `"FLORIDA"`), `eventType`, `month`, and `minDamageInUsd`; `limit` 1–100 (default 50) with `offset`
+- No token required; `year` is required (1950 through the current partial year); filter by `episodeId` (exact digit string from a returned event; blank means unset), `state` (the full NCEI name, e.g. `"FLORIDA"`), `eventType`, `month`, and `minDamageInUsd`; `limit` 1–100 (default 50) with `offset`
+- Each distinct episode narrative appears once in `episodeNarratives`, linked from events by `episodeNarrativeRef`; individual `eventNarrative` text stays on each event. Optional local ISO `beginDate`/`endDate` values can feed CDO date filters alongside the unchanged NCEI date-time and timezone fields.
 - Damage arrives as the raw magnitude-suffixed string (`"1.20M"`) and a parsed dollar amount, omitted rather than zeroed when NCEI reported none; a zero-match response names the event types and states the year contains
 - Fails as `year_unavailable` when NCEI publishes no file for the year, and `malformed_export` when a downloaded file is not the expected table
 
@@ -155,7 +156,7 @@ NOAA-specific:
 
 Agent-friendly output:
 
-- Paginated results across every list and search tool — `limit`, `offset`, and total count in every response
+- Paginated results across every list and search tool — zero-based `offset` in inputs and returned metadata; CDO metadata stays absent when upstream omits it or `includemetadata=false`. Coordinates and coverage retain upstream precision; coverage text uses raw fractions labeled 0–1.
 - Station, location, and dataset IDs flow naturally between tools — find a location, find stations in it, fetch data from those stations
 - Structured error contracts with typed `reason` codes and recovery hints — agents branch on data, not string parsing
 - Damage and cost fields are honest about upstream gaps — an unreported NCEI figure is omitted rather than reported as a confirmed zero

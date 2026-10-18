@@ -21,6 +21,7 @@ import type { Context } from '@cyanheads/mcp-ts-core';
 import { McpError, notFound, serializationError } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { CsvStreamReader } from '@/services/csv/csv-stream-reader.js';
+import { explainUpstreamFailure } from '@/services/upstream-failure.js';
 import {
   ALL_DISASTERS,
   type BillionDollarDisaster,
@@ -361,7 +362,8 @@ export class BillionDollarDisastersService {
       // NCEI answers an unpublished scope with a 404 HTML page. The state code
       // is the only thing the caller can change, so it is named rather than the
       // internal URL.
-      if (!isMissingUpstreamFile(error)) throw error;
+      if (!isMissingUpstreamFile(error))
+        throw explainUpstreamFailure(error, 'NCEI billion-dollar disasters export download');
       throw notFound(
         state === undefined
           ? `NCEI is not publishing the national billion-dollar disasters export "${file}" right now.`

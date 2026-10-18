@@ -1,6 +1,6 @@
 # noaa-climate-mcp-server - Directory Structure
 
-Generated on: 2026-10-08 20:45:05
+Generated on: 2026-10-18 22:33:43
 
 ```text
 noaa-climate-mcp-server/
@@ -175,10 +175,11 @@ noaa-climate-mcp-server/
 │   │   │   └── types.ts
 │   │   ├── csv/
 │   │   │   └── csv-stream-reader.ts
-│   │   └── storm-events/
-│   │       ├── damage.ts
-│   │       ├── storm-events-service.ts
-│   │       └── types.ts
+│   │   ├── storm-events/
+│   │   │   ├── damage.ts
+│   │   │   ├── storm-events-service.ts
+│   │   │   └── types.ts
+│   │   └── upstream-failure.ts
 │   └── index.ts
 ├── tests/
 │   ├── fixtures/
