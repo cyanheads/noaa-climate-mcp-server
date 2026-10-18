@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.7.0](changelog/0.7.x/0.7.0.md) — 2026-10-18 · ⚠️ Breaking
+
+Storm episode navigation and faithful climate responses.
+
 ## [0.6.5](changelog/0.6.x/0.6.5.md) — 2026-10-08
 
 Adopts mcp-ts-core 0.13.14: numeric and boolean strings and a lone string for a list field are repaired before validation, tool errors carry a request ID, and network-failure messages name NOAA by origin only. The eight CDO tools throw upstream-outage reasons as literals, so the error-contract lint now covers them.

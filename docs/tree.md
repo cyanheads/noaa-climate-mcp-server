@@ -1,6 +1,6 @@
 # noaa-climate-mcp-server - Directory Structure
 
-Generated on: 2026-10-18 22:33:43
+Generated on: 2026-10-18 22:47:52
 
 ```text
 noaa-climate-mcp-server/
@@ -30,6 +30,7 @@ noaa-climate-mcp-server/
 │   ├── 0.4.x/
 │   ├── 0.5.x/
 │   ├── 0.6.x/
+│   ├── 0.7.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
