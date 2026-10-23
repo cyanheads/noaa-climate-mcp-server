@@ -14,7 +14,7 @@
 | `noaa_climate_find_stations` | Search for weather stations by location, bounding box, dataset, data type, and date range. Returns station IDs, names, coordinates, and data coverage metadata. | `locationId?`, `extent?`, `datasetId?`, `datatypeId?`, `datacategoryId?`, `startDate?`, `endDate?`, `sortField?`, `limit`, `offset` | `readOnlyHint: true`, `openWorldHint: true` |
 | `noaa_climate_get_station` | Fetch full metadata for a single station by ID, including name, coordinates, elevation, and data coverage dates. | `stationId` | `readOnlyHint: true`, `openWorldHint: false` |
 | `noaa_climate_fetch_data` | Fetch historical observation data for a dataset, date range, and one or more stations or locations. Returns time-series values for the requested data types. | `datasetId`, `startDate`, `endDate`, `stationId[]?`, `locationId[]?`, `datatypeId[]?`, `units?`, `limit`, `offset` | `readOnlyHint: true`, `openWorldHint: true` |
-| `noaa_climate_search_storm_events` | Search the NCEI Storm Events Database for one calendar year — severe-weather events with magnitude, casualties, damage, and narratives. A separate corpus from CDO: bulk gzip CSV, no token. | `year`, `episodeId?`, `state?`, `eventType?`, `month?`, `minDamageInUsd?`, `limit`, `offset` | `readOnlyHint: true`, `openWorldHint: true` |
+| `noaa_climate_search_storm_events` | Search the NCEI Storm Events Database for one calendar year — severe-weather events with magnitude, casualties, damage, and narratives. A separate corpus from CDO: bulk gzip CSV, no token. | `year`, `episodeId?`, `state?`, `eventType?`, `month?`, `startDate?`, `endDate?`, `minDamageInUsd?`, `limit`, `offset` | `readOnlyHint: true`, `openWorldHint: true` |
 | `noaa_climate_get_billion_dollar_disasters` | Query NCEI Billion-Dollar Weather and Climate Disasters — individual disasters with CPI-adjusted cost and deaths, or per-year totals by disaster class. A third corpus: small static CSVs, no token, every cost normalized to whole US dollars. | `startYear?`, `endYear?`, `disasterType?`, `state?`, `minCostInUsd?`, `summary`, `limit`, `offset` | `readOnlyHint: true`, `openWorldHint: true` |
 
 ### Resources
@@ -53,7 +53,7 @@ The API wraps `https://www.ncei.noaa.gov/cdo-web/api/v2/`.
 
 | Service | Wraps | Used By |
 |:--------|:------|:--------|
-| `CdoService` | NOAA CDO API v2 (`https://www.ncei.noaa.gov/cdo-web/api/v2/`) | All tools, both resources |
+| `CdoService` | NOAA CDO API v2 (`https://www.ncei.noaa.gov/cdo-web/api/v2/`) | Eight CDO tools, both resources |
 | `StormEventsService` | NCEI Storm Events bulk CSV export (`https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/`) | `noaa_climate_search_storm_events` |
 | `BillionDollarDisastersService` | NCEI Billion-Dollar Weather and Climate Disasters CSV exports (`https://www.ncei.noaa.gov/access/billions/`) | `noaa_climate_get_billion_dollar_disasters` |
 | `CsvStreamReader` (`src/services/csv/`) | Not an upstream — the incremental RFC 4180 reader both bulk-CSV services parse with | `StormEventsService`, `BillionDollarDisastersService` |
@@ -68,6 +68,10 @@ The API wraps `https://www.ncei.noaa.gov/cdo-web/api/v2/`.
 
 **Storm episode navigation.** `episodeId` is an optional trimmed digit string, matched exactly against `EPISODE_ID` before totals and paging; blank means omitted and leading zeros stay significant. The tool removes each event's `episodeNarrative` and emits `episodeNarrativeRef` plus a page-local `episodeNarratives: [{ ref, text }]` dictionary. Text identity determines grouping because one episode can carry different narratives and historical narratives can lack episode IDs. `eventNarrative` stays on the event. Valid `BEGIN_YEARMONTH`/`BEGIN_DAY` and `END_YEARMONTH`/`END_DAY` pairs add optional local ISO `beginDate`/`endDate` fields without replacing raw date-time or timezone fields; missing or invalid pairs omit only the ISO field.
 
+**Storm date overlap.** Optional real-calendar `YYYY-MM-DD` inputs `startDate` and `endDate` intersect the other filters before unknown-damage accounting, totals, and pagination: a valid source span ends on or after the lower bound and begins on or before the upper bound. Both endpoints must exist, be valid, and be ordered when either bound is active; without date bounds sparse or reversed spans remain visible. One-sided and equal bounds work. Cross-year intervals search only the export selected by required `year`, avoiding implicit multi-file downloads. Reversed request dates fail locally as `invalid_date_range` with recovery guidance. `appliedDateRange: { startDate?, endDate? }` appears on both surfaces only when a bound was supplied; `month` continues to match the begin month.
+
+**Literal Storm narratives.** The text formatter escapes CommonMark punctuation and renders source line breaks explicitly for both event and deduplicated episode narratives. Structured text, dictionary grouping, references, and row order remain unchanged, so literal source notation such as `**may**` survives rendering. `marked` is a development-only parser used to check rendered equivalence, including entities and multiline source text.
+
 **Caching bounds.** The directory listing and up to two years of compressed bytes are held for six hours, then re-fetched — NCEI republishes a year under a new `_c` suffix at any time. Two resident years stay under 30 MB: a recent bundle is about 12 MB and the largest, 2011, is 15 MB. That is the retained set, not the memory envelope — 2024 decompresses to 66.6 MB in 4,272 16 KB chunks, and a cold full-year scan of it measured 129 MB RSS at baseline against a 269 MB peak, climbing further across repeated scans. The chunk strings are transient garbage the collector reclaims, not retention, but sizing the process against the ~30 MB cache figure would be wrong.
 
 **Billion-Dollar Disasters is a third upstream, and its defining hazard is units.** `BillionDollarDisastersService` reads four small static CSVs — `events-US.csv` (403 rows), `time-series-US.csv` (45 rows), and their `events-{STATE}.csv` / `time-series-{STATE}.csv` variants. No token, no gzip, no filename discovery: they are plain `text/csv` at fixed names, small enough to buffer whole, so the streaming machinery Storm Events needs would be overhead here. Four properties shape the service:
@@ -77,15 +81,16 @@ The API wraps `https://www.ncei.noaa.gov/cdo-web/api/v2/`.
 - **The per-state per-year export has a different shape, not just a different scope.** It publishes `"<Type> Cost Range"` — a binned range like `2000-5000` — where the national file publishes `"<Type> Cost"` plus six 75/90/95% confidence-bound columns. Which shape a file carries is read off its header rather than inferred from the scope, so one parser handles both.
 - **Per-state per-event rows carry the national cost.** The state exports select national disasters that reached the state; they do not apportion cost. Summing per-state figures double-counts, and the tool description says so.
 
-**Caching bounds.** Up to eight parsed exports are held for six hours, then re-fetched — NCEI adds a year once its assessment settles and revises prior years' CPI adjustments with it. The bound exists so a long-lived process does not accumulate one entry per state and territory; a parsed export is a few hundred rows, so bytes are not the concern.
+**Caching bounds.** Up to eight parsed exports are held for six hours, then re-fetched from the archive without promising new years or current-price CPI rebasing. The bound exists so a long-lived process does not accumulate one entry per state and territory; a parsed export is a few hundred rows, so bytes are not the concern.
 
-**Coverage trails the calendar.** The corpus runs from 1980 to the last fully assessed year — 2024 as of writing, not the current year. The service reports the span it actually found in the rows rather than assuming same-year freshness, and a query past the end returns an empty page with a notice, not an error.
+**Retired archive.** NOAA retired the product after calendar year 2024; the 1980–2024 archive remains available with no later years added. The service reports the span it actually found in each export’s rows. Every successful response carries the retirement notice, composed after truncation enrichment with any clamp, empty-page, or exhaustion guidance. CPI-adjusted costs preserve the archived export’s adjustment; no current-price rebasing or undocumented CPI base year is inferred.
 
 ## Config
 
 | Env Var | Required | Description |
 |:--------|:---------|:------------|
-| `NOAA_CDO_TOKEN` | Yes | API token from ncdc.noaa.gov/cdo-web/token. Sent as `token` header on every request. |
+| `NOAA_CDO_TOKEN` | CDO only | API token from ncdc.noaa.gov/cdo-web/token. Sent as the `token` header on CDO requests; the two public bulk corpora need no token. |
+| `NOAA_CLAMP_LIMITS` | No | Defaults to `true`: clamp positive integer read limits to 1000 for CDO or 100 for either bulk corpus. Exact `false` restores schema rejection above the ceiling; other nonempty values fail startup. Restart after changing it. |
 
 ## Implementation Order
 
@@ -119,7 +124,7 @@ The NOAA CDO data model has five entity types and one data-fetch endpoint:
 
 ### Billion-Dollar Disasters Corpus
 
-A separate NCEI corpus with no CDO entity model — four static CSVs under `https://www.ncei.noaa.gov/access/billions/`, addressed by scope rather than by ID. Costs are stated per file and differ; the server converts every one to whole US dollars.
+A separate, retired 1980–2024 NCEI archive with no CDO entity model — four static CSVs under `https://www.ncei.noaa.gov/access/billions/`, addressed by scope rather than by ID. Costs are stated per file and differ; the server converts every one to whole US dollars while preserving the archive’s CPI adjustment.
 
 | Export | Rows | Declared cost unit | Cost shape |
 |:-------|:-----|:-------------------|:-----------|
@@ -273,6 +278,12 @@ Use `NORMAL_HLY` (hourly) or `NORMAL_MLY` (monthly) for coarser granularity. All
 ---
 
 ## Design Decisions
+
+**Dataset date filters use inclusive coverage overlap locally.** CDO ignores dates on `/datasets`. The handler retrieves the complete catalog matching the non-date filters in upstream sort order, then compares normalized `maxdate >= startDate` and `mindate <= endDate` for each supplied bound before slicing. Filtered totals, metadata, and exhaustion describe the caller's page. Catalog requests share a 45-second deadline and caller cancellation; an incomplete response that makes no progress fails rather than returning a partial total. Undated calls retain upstream paging and count-probe behavior.
+
+**Discovery dates use normalized handler-level ordering checks.** The five discovery tools reject `startDate > endDate` with `validation_error` before fetching, as observation queries do. Equal dates and single-ended ranges remain accepted, including compact, unpadded dashed, and supported second-precision datetime forms. Handler checks carry recovery instructions that schema refinements cannot.
+
+**Station extents validate geography without reordering it.** `minLat,minLon,maxLat,maxLon` accepts four finite signed decimal or scientific numbers with surrounding whitespace, latitude within ±90 and longitude within ±180. Equal bounds remain valid. In-range reversed axes are forwarded unchanged and yield no matches; the server does not split or wrap an antimeridian box. Syntax reaches clients through the advertised pattern; numeric overflow and geographic bounds are checked locally before any request.
 
 **1. `noaa_climate_list_location_categories` is a first-class discovery tool.**
 `/locationcategories` returns 12 stable ID/name pairs. Keeping them in the `noaa_climate_find_locations` parameter prose alone let one — `US_TERR` — go missing, and left the hydrological categories buried in a sentence rather than reachable by a call. The tool takes pagination and sort only: CDO ignores `datasetid`, `locationid`, `stationid`, and the date range on this endpoint, so offering those filters would advertise narrowing that never happens.

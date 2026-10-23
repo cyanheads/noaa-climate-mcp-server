@@ -22,6 +22,7 @@
       "args": ["${__dirname}/dist/index.js"],
       "env": {
         "NOAA_CDO_TOKEN": "${user_config.noaa_cdo_token}",
+        "NOAA_CLAMP_LIMITS": "${user_config.noaa_clamp_limits}",
         "MCP_TRANSPORT_TYPE": "stdio",
         "MCP_AUTH_MODE": "none",
         "NODE_ENV": "production"
@@ -36,6 +37,12 @@
   "tools_generated": true,
   "prompts_generated": true,
   "user_config": {
+    "noaa_clamp_limits": {
+      "type": "string",
+      "title": "Clamp Read Limits",
+      "description": "Clamp positive integer read limits to page ceilings. Accepts true or false; false restores rejection above the ceiling.",
+      "default": "true"
+    },
     "noaa_cdo_token": {
       "type": "string",
       "title": "NOAA CDO API Token",

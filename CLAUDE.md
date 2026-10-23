@@ -24,7 +24,7 @@ NOAA Climate Data Online (CDO) API v2 — historical weather data — plus two s
 - `noaa_climate_get_station` — fetch full metadata for a single station
 - `noaa_climate_fetch_data` — fetch historical observations with date range validation and unit selection
 - `noaa_climate_search_storm_events` — search NCEI Storm Events for one year (severe-weather events, damage, casualties, narratives)
-- `noaa_climate_get_billion_dollar_disasters` — query NCEI Billion-Dollar Weather and Climate Disasters, per disaster or per year
+- `noaa_climate_get_billion_dollar_disasters` — query NCEI’s retired 1980–2024 Billion-Dollar Weather and Climate Disasters archive, per disaster or per year. Every successful response carries a retirement notice composed with paging guidance. CPI adjustments stay as archived, without current-price rebasing or an inferred base year; `coveredYears` stays row-derived. State shape is advertised as `^\s*[A-Za-z]{2}\s*$`; well-formed unavailable codes remain `unknown_state`.
 - `noaa://datasets` resource — all CDO datasets as injectable context
 - `noaa://stations/{stationId}` resource — station metadata by ID
 

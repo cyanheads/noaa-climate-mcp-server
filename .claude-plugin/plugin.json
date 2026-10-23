@@ -13,6 +13,12 @@
   "license": "Apache-2.0",
   "keywords": ["mcp", "mcp-server", "model-context-protocol", "noaa", "climate", "weather", "cdo"],
   "userConfig": {
+    "NOAA_CLAMP_LIMITS": {
+      "type": "string",
+      "title": "Clamp Read Limits",
+      "description": "Clamp positive integer read limits to page ceilings. Accepts true or false; false restores rejection above the ceiling.",
+      "default": "true"
+    },
     "NOAA_CDO_TOKEN": {
       "type": "string",
       "title": "NOAA CDO API Token",
@@ -27,6 +33,7 @@
       "args": ["-y", "@cyanheads/noaa-climate-mcp-server"],
       "env": {
         "NOAA_CDO_TOKEN": "${user_config.NOAA_CDO_TOKEN}",
+        "NOAA_CLAMP_LIMITS": "${user_config.NOAA_CLAMP_LIMITS}",
         "MCP_TRANSPORT_TYPE": "stdio"
       }
     }

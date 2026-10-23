@@ -22,6 +22,14 @@
       "version": "0.7.0",
       "environmentVariables": [
         {
+          "name": "NOAA_CLAMP_LIMITS",
+          "description": "Clamp positive integer read limits to page ceilings. Accepts true or false; false restores rejection above the ceiling.",
+          "format": "string",
+          "isRequired": false,
+          "default": "true",
+          "choices": ["true", "false"]
+        },
+        {
           "name": "NOAA_CDO_TOKEN",
           "description": "NOAA CDO API token. Obtain free at https://www.ncdc.noaa.gov/cdo-web/token.",
           "format": "string",
@@ -46,6 +54,14 @@
       "runtimeHint": "npx",
       "version": "0.7.0",
       "environmentVariables": [
+        {
+          "name": "NOAA_CLAMP_LIMITS",
+          "description": "Clamp positive integer read limits to page ceilings. Accepts true or false; false restores rejection above the ceiling.",
+          "format": "string",
+          "isRequired": false,
+          "default": "true",
+          "choices": ["true", "false"]
+        },
         {
           "name": "MCP_TRANSPORT_TYPE",
           "description": "Selects the HTTP transport.",

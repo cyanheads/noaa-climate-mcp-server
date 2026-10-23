@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.7.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.3-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.7.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -44,7 +44,7 @@ Historical weather and climate records from NOAA: station observations from Clim
 | `noaa_climate_get_station` | Fetch full metadata for a single station by ID |
 | `noaa_climate_fetch_data` | Fetch historical observation records for a dataset and date range |
 | `noaa_climate_search_storm_events` | Search the NCEI Storm Events Database for one year — tornadoes, hail, floods, hurricanes, with damage, casualties, and narratives |
-| `noaa_climate_get_billion_dollar_disasters` | Query NOAA's Billion-Dollar Weather and Climate Disasters — CPI-adjusted costs and deaths per disaster, or per-year totals by disaster class |
+| `noaa_climate_get_billion_dollar_disasters` | Query NOAA's retired 1980–2024 Billion-Dollar Weather and Climate Disasters archive — CPI-adjusted costs and deaths per disaster, or per-year totals by disaster class |
 
 ### Resources
 
@@ -59,6 +59,7 @@ Historical weather and climate records from NOAA: station observations from Clim
 
 - No required inputs; optional data type, location, station, and date-range filters; `limit` 1–1000 (default 25) with `offset`, sortable by `id`, `name`, `mindate`, `maxdate`, or `datacoverage`
 - Returns each dataset's ID, name, and date span — GHCND (daily, 1763–present), GSOM (monthly), GSOY (annual), NORMAL_DLY/MLY/ANN/HLY (1981–2010 normals)
+- Date filters use inclusive coverage overlap: `maxdate >= startDate` and `mindate <= endDate` for each supplied bound. The complete catalog matching the other filters is retrieved before filtering and pagination; totals describe that filtered view.
 
 ---
 
@@ -94,6 +95,7 @@ Historical weather and climate records from NOAA: station observations from Clim
 ### `noaa_climate_find_stations` <sub>tool</sub>
 
 - Filter by `locationId`, `extent` (lat/lon bounding box), `datasetId`, `datatypeId` (array), and date range; `limit` 1–1000 (default 25) with `offset`
+- `extent` is `minLat,minLon,maxLat,maxLon`: four finite signed decimal or scientific numbers, with surrounding whitespace allowed, latitude within ±90 and longitude within ±180. Equal coordinates work; reversed axes return no matches and are forwarded unchanged, without antimeridian wrapping.
 - Returns station IDs (`GHCND:USW00024233`, `COOP:010008`), names, coordinates, elevation, and data-coverage dates — the IDs feed `noaa_climate_fetch_data` as `stationId`
 
 ---
@@ -115,8 +117,9 @@ Historical weather and climate records from NOAA: station observations from Clim
 
 ### `noaa_climate_search_storm_events` <sub>tool</sub>
 
-- No token required; `year` is required (1950 through the current partial year); filter by `episodeId` (exact digit string from a returned event; blank means unset), `state` (the full NCEI name, e.g. `"FLORIDA"`), `eventType`, `month`, and `minDamageInUsd`; `limit` 1–100 (default 50) with `offset`
-- Each distinct episode narrative appears once in `episodeNarratives`, linked from events by `episodeNarrativeRef`; individual `eventNarrative` text stays on each event. Optional local ISO `beginDate`/`endDate` values can feed CDO date filters alongside the unchanged NCEI date-time and timezone fields.
+- No token required; `year` selects one export (1950 through the current partial year); filter by `episodeId` (exact digit string from a returned event; whitespace is trimmed, blank means unset, leading zeros remain significant), `state` (the full NCEI name, e.g. `"FLORIDA"`), `eventType`, `month`, `startDate`/`endDate`, and `minDamageInUsd`; page ceiling 100 (default 50) with `offset`
+- Optional `startDate`/`endDate` are real `YYYY-MM-DD` dates and match inclusive event-span overlap before damage accounting, totals, and pagination. One-sided, equal, and cross-year intervals work; only `year` selects the export. Active date bounds exclude missing, invalid, or reversed source spans; without bounds those rows remain visible. `appliedDateRange` echoes supplied bounds on both surfaces. Reversed request dates fail as `invalid_date_range` before downloading.
+- Each distinct episode narrative appears once in `episodeNarratives`, linked from events by `episodeNarrativeRef`; individual `eventNarrative` text stays on each event. Rendered narratives preserve literal punctuation and line breaks. Optional local ISO `beginDate`/`endDate` values can feed CDO date filters alongside the unchanged NCEI date-time and timezone fields.
 - Damage arrives as the raw magnitude-suffixed string (`"1.20M"`) and a parsed dollar amount, omitted rather than zeroed when NCEI reported none; a zero-match response names the event types and states the year contains
 - Fails as `year_unavailable` when NCEI publishes no file for the year, and `malformed_export` when a downloaded file is not the expected table
 
@@ -126,7 +129,8 @@ Historical weather and climate records from NOAA: station observations from Clim
 
 - Individual disasters by default, or `summary=true` for per-year counts and costs by disaster class; filter by `startYear`/`endYear`, `disasterType` (one of seven NCEI classes), `minCostInUsd`, and `state` (two-letter postal code); `limit` 1–100 (default 50) with `offset`
 - Every cost is whole US dollars whatever unit the export declares (echoed as `declaredCostUnit`); a `state` scope reports national costs (`costBasis: "national"`) and binned per-year `costRangeInUsd`
-- Coverage runs 1980 through the last year NCEI has finished assessing (`coveredYears`), not the current calendar year
+- NOAA retired the product after 2024; the 1980–2024 archive remains available with no later years added. `coveredYears` reports the span actually present in the selected export. Every successful response carries this archive notice alongside any clamp or paging guidance.
+- CPI-adjusted costs preserve the archived export’s adjustment; the server does not rebase them to current prices or infer a CPI base year.
 
 ---
 
@@ -150,13 +154,15 @@ NOAA-specific:
 
 - Full CDO API v2 coverage — datasets, data categories, data types, locations, stations, and observations — plus two separate NCEI bulk-CSV corpora requiring no token: severe-weather events (Storm Events Database) and billion-dollar disaster costs
 - Client-side date-range validation enforced per dataset before hitting the API, reporting the exact upstream limit back to the caller
+- Discovery date intervals reject `startDate > endDate` before any request, with `validation_error` and a hint to swap the values. Equal and single-ended dates remain valid; compact `YYYYMMDD`, unpadded dashed dates, and supported second-precision datetime forms are normalized for comparison.
 - Unit normalization via CDO's `units` parameter avoids raw tenths-of-unit integer confusion
-- CDO's own rejection message is recovered and surfaced — an over-long date range, malformed date, missing parameter, or over-large `limit` reports the reason CDO gave instead of a bare status line
+- CDO's own rejection message is recovered and surfaced — an over-long date range, malformed date, or missing parameter reports the reason CDO gave instead of a bare status line
 - Billion-Dollar Disasters costs are converted to whole US dollars from whichever unit each NCEI export declares in its own preamble, since the unit differs by export
 
 Agent-friendly output:
 
-- Paginated results across every list and search tool — zero-based `offset` in inputs and returned metadata; CDO metadata stays absent when upstream omits it or `includemetadata=false`. Coordinates and coverage retain upstream precision; coverage text uses raw fractions labeled 0–1.
+- Paginated results across every list and search tool — zero-based `offset` in inputs and returned metadata. Locally filtered dataset and location views synthesize metadata from the filtered results; other CDO pages preserve absent upstream metadata. Coordinates and coverage retain upstream precision; coverage text uses raw fractions labeled 0–1.
+- Positive integer read limits are clamped to the page ceiling: 1000 for CDO, 100 for Storm Events and Billion-Dollar Disasters. A notice names the requested and applied limits alongside any empty-page or exhaustion guidance; use the applied limit to advance `offset`. Each clamp is logged and counted as `noaa.pagination.limit_clamped`.
 - Station, location, and dataset IDs flow naturally between tools — find a location, find stations in it, fetch data from those stations
 - Structured error contracts with typed `reason` codes and recovery hints — agents branch on data, not string parsing
 - Damage and cost fields are honest about upstream gaps — an unreported NCEI figure is omitted rather than reported as a confirmed zero
@@ -242,7 +248,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 NOAA_CDO_TOKEN=your-token-here bun ru
 ### Prerequisites
 
 - [Bun v1.4.0](https://bun.sh/) or higher (or Node.js ≥24.0.0).
-- A free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) — required for all requests.
+- A free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) — required for CDO requests; Storm Events and Billion-Dollar Disasters need no token.
 
 ### Installation
 
@@ -273,11 +279,12 @@ cp .env.example .env
 
 ## Configuration
 
-All configuration is validated at startup via Zod schemas in `src/config/server-config.ts`. Key environment variables:
+Server-specific configuration uses Zod schemas in `src/config/server-config.ts`. The page-limit policy is validated at startup; the CDO token is required when a CDO request runs. Key environment variables:
 
 | Variable | Description | Default |
 |:---|:---|:---|
-| `NOAA_CDO_TOKEN` | **Required.** NOAA CDO API token — obtain free at [ncdc.noaa.gov/cdo-web/token](https://www.ncdc.noaa.gov/cdo-web/token) | — |
+| `NOAA_CDO_TOKEN` | **Required for CDO.** Obtain free at [ncdc.noaa.gov/cdo-web/token](https://www.ncdc.noaa.gov/cdo-web/token); the two bulk corpora need no token | — |
+| `NOAA_CLAMP_LIMITS` | `true` clamps positive integer read limits to the page ceiling; `false` restores schema rejection above it. Only the exact strings `true` and `false` are accepted; other nonempty values fail startup. Restart after changing this setting. | `true` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http` | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port | `3010` |
 | `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path where the MCP server is mounted | `/mcp` |

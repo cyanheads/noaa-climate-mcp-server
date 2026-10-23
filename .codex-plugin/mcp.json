@@ -5,6 +5,6 @@
     "env": {
       "MCP_TRANSPORT_TYPE": "stdio"
     },
-    "env_vars": ["NOAA_CDO_TOKEN"]
+    "env_vars": ["NOAA_CDO_TOKEN", "NOAA_CLAMP_LIMITS"]
   }
 }
