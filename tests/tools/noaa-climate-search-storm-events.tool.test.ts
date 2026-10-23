@@ -6,8 +6,10 @@
  * @module tests/tools/noaa-climate-search-storm-events.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { marked } from 'marked';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateSearchStormEvents } from '@/mcp-server/tools/definitions/noaa-climate-search-storm-events.tool.js';
 import type { StormEvent, StormEventsSearchResult } from '@/services/storm-events/types.js';
@@ -106,6 +108,190 @@ async function run(input: unknown) {
 }
 
 describe('noaaClimateSearchStormEvents — input contract', () => {
+  it('returns consecutive clamped pages and interval echoes through the wire contract', async () => {
+    const events = Array.from({ length: 101 }, (_, i) => ({ ...helene, eventId: String(i) }));
+    search.mockImplementation(async ({ limit, offset }) =>
+      searchResult({ events: events.slice(offset, offset + limit), totalCount: 101 }),
+    );
+    for (const [offset, count] of [
+      [0, 100],
+      [100, 1],
+      [101, 0],
+    ] as const) {
+      const response = await runToolContract(noaaClimateSearchStormEvents, {
+        year: 2024,
+        startDate: '2024-09-24',
+        endDate: '2024-09-29',
+        limit: 101,
+        offset,
+      });
+      expect(response.isError).not.toBe(true);
+      expect(response.structuredContent).toMatchObject({
+        totalCount: 101,
+        appliedDateRange: { startDate: '2024-09-24', endDate: '2024-09-29' },
+        notice: expect.stringContaining('Requested limit 101 was clamped to 100'),
+      });
+      const result = noaaClimateSearchStormEvents.output.parse(response.structuredContent);
+      expect(result.events.map((event) => event.eventId)).toEqual(
+        offset === 0
+          ? Array.from({ length: 100 }, (_, i) => String(i))
+          : offset === 100
+            ? ['100']
+            : [],
+      );
+      expect(result.events).toHaveLength(count);
+      const text = response.content
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain('2024-09-24');
+      expect(text).toContain('2024-09-29');
+      expect(text).toContain('Requested limit 101 was clamped to 100');
+      if (offset === 101) {
+        expect(response.structuredContent).toHaveProperty('exhausted', true);
+        expect(text).toContain('past the end');
+        expect(result.episodeNarratives).toEqual([]);
+      }
+    }
+    expect(search.mock.calls.map(([query]) => [query.limit, query.offset])).toEqual([
+      [100, 0],
+      [100, 100],
+      [100, 101],
+    ]);
+  });
+
+  it('names an out-of-file interval and clamp together on both empty surfaces', async () => {
+    mockSearch(searchResult({ events: [], totalCount: 0 }));
+    const response = await runToolContract(noaaClimateSearchStormEvents, {
+      year: 2024,
+      startDate: '2025-01-01',
+      limit: 101,
+    });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      events: [],
+      episodeNarratives: [],
+      totalCount: 0,
+      appliedDateRange: { startDate: '2025-01-01' },
+      notice: expect.stringContaining('startDate="2025-01-01"'),
+    });
+    const text = response.content
+      .map((block) => (block.type === 'text' ? block.text : ''))
+      .join('\n');
+    expect(text.split('\n')).toContain(
+      '**Applied date range (inclusive overlap):** 2025-01-01 – unbounded end',
+    );
+    expect(text).toContain('Requested limit 101 was clamped to 100');
+    expect(text).toContain('No storm events');
+  });
+
+  it.each([0, -1, 1.5, 'many'])(
+    'rejects invalid limit %j on both surfaces before the service',
+    async (limit) => {
+      const failure = await contractFailure(noaaClimateSearchStormEvents, { year: 2024, limit });
+      expect(failure.code).toBe(JsonRpcErrorCode.InvalidParams);
+      expect(failure.data.reason).toBe('invalid_arguments');
+      expect(failure.text).toContain('limit');
+      expect(search).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps invalid dates in standard argument recovery on both surfaces', async () => {
+    const failure = await contractFailure(noaaClimateSearchStormEvents, {
+      year: 2024,
+      startDate: '2023-02-29',
+    });
+    expect(failure.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(failure.data.reason).toBe('invalid_arguments');
+    expect(failure.text).toContain('startDate');
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('validates episode IDs within a bounded CPU budget', () => {
+    for (const episodeId of [
+      `${' '.repeat(80_000)}!`,
+      '9'.repeat(80_000),
+      `${'\ufeff\u2028'.repeat(40_000)}!`,
+      `${' '.repeat(80_000)}\n`,
+    ]) {
+      const before = process.threadCpuUsage();
+      const valid = noaaClimateSearchStormEvents.input.safeParse({ year: 2024, episodeId }).success;
+      const cpu = process.threadCpuUsage(before);
+      expect(cpu.user + cpu.system).toBeLessThan(100_000);
+      expect(valid).toBe(!episodeId.endsWith('!'));
+    }
+  });
+
+  it('advertises the episode format while preserving trim whitespace', async () => {
+    expect(z.toJSONSchema(noaaClimateSearchStormEvents.input).properties?.episodeId).toMatchObject({
+      pattern: '^\\s*(?:\\d+\\s*)?$',
+    });
+    await run({ year: 2024, episodeId: '\ufeff\u202800123\u2029' });
+    expect(search.mock.calls[0]?.[0].episodeId).toBe('00123');
+  });
+
+  it('forwards and renders the inclusive interval on both surfaces', async () => {
+    const { result } = await run({ year: 2024, startDate: '2024-09-24', endDate: '2024-09-29' });
+    expect(search.mock.calls[0]?.[0]).toMatchObject({
+      startDate: '2024-09-24',
+      endDate: '2024-09-29',
+    });
+    expect(result).toMatchObject({
+      appliedDateRange: { startDate: '2024-09-24', endDate: '2024-09-29' },
+    });
+    const text = firstText(noaaClimateSearchStormEvents.format!(result));
+    expect(text).toContain('2024-09-24');
+    expect(text).toContain('2024-09-29');
+  });
+
+  it('rejects reversed dates before the service with its declared recovery', async () => {
+    const failure = await contractFailure(noaaClimateSearchStormEvents, {
+      year: 2024,
+      startDate: '2024-09-29',
+      endDate: '2024-09-24',
+    });
+    expect(failure.data.reason).toBe('invalid_date_range');
+    expect(failure.text).toContain(failure.data.recovery?.hint);
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it.each(['2023-02-29', '2024-04-31', '20240924', '2024-9-24', '2024-09-24T00:00:00', ''])(
+    'rejects an invalid calendar date %j',
+    (startDate) => {
+      expect(noaaClimateSearchStormEvents.input.safeParse({ year: 2024, startDate }).success).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each([
+    { startDate: '2024-02-29' },
+    { endDate: '2025-01-01' },
+    { startDate: '2024-09-24', endDate: '2024-09-24' },
+  ])('preserves a supplied one-sided or equal interval %j', async (range) => {
+    const { result } = await run({ year: 2024, ...range });
+    expect(result).toMatchObject({ appliedDateRange: range });
+    expect(search.mock.calls[0]?.[0]).toMatchObject(range);
+  });
+
+  it('does not add an interval when none was supplied', async () => {
+    expect((await run({ year: 2024 })).result).not.toHaveProperty('appliedDateRange');
+  });
+
+  it.each([
+    { events: [helene], totalCount: 149, offset: 0, guidance: 'Showing events' },
+    { events: [], totalCount: 0, offset: 0, guidance: 'No storm events' },
+    { events: [], totalCount: 3, offset: 100, guidance: 'past the end' },
+  ])(
+    'composes the clamp with page guidance at offset $offset and total $totalCount',
+    async ({ events, totalCount, offset, guidance }) => {
+      mockSearch(searchResult({ events, totalCount }));
+      const { ctx } = await run({ year: 2024, limit: 101, offset });
+      expect(search.mock.calls[0]?.[0]).toMatchObject({ limit: 100, offset });
+      expect(getEnrichment(ctx).notice).toContain('Requested limit 101 was clamped to 100.');
+      expect(getEnrichment(ctx).notice).toContain(guidance);
+      if (totalCount === 149) expect(getEnrichment(ctx).cap).toBe(100);
+    },
+  );
   it('rejects a call that omits year rather than fetching every year', () => {
     expect(noaaClimateSearchStormEvents.input.safeParse({}).success).toBe(false);
   });
@@ -155,9 +341,9 @@ describe('noaaClimateSearchStormEvents — input contract', () => {
     ).toBe(false);
   });
 
-  it('rejects a limit above the page cap and a negative offset', () => {
+  it('accepts an oversized limit for clamping and rejects a negative offset', () => {
     expect(noaaClimateSearchStormEvents.input.safeParse({ year: 2024, limit: 101 }).success).toBe(
-      false,
+      true,
     );
     expect(noaaClimateSearchStormEvents.input.safeParse({ year: 2024, offset: -1 }).success).toBe(
       false,
@@ -230,7 +416,10 @@ describe('noaaClimateSearchStormEvents — structuredContent', () => {
       'n1',
     ]);
     expect(result.events.every((event) => !('episodeNarrative' in event))).toBe(true);
-    const text = firstText(noaaClimateSearchStormEvents.format!(result));
+    const text = marked.parse(firstText(noaaClimateSearchStormEvents.format!(result)), {
+      gfm: false,
+      async: false,
+    });
     expect(text.split(helene.episodeNarrative!).length - 1).toBe(1);
     expect(text).toContain('n1');
     expect(text).toContain(helene.eventNarrative);
@@ -492,6 +681,40 @@ describe('noaaClimateSearchStormEvents — an H-magnitude damage figure', () => 
 });
 
 describe('noaaClimateSearchStormEvents — format()', () => {
+  it.each([
+    'this damage|**may** be part of a longer track tornado',
+    '*stars* _under_ `code` \\slash [label](https://example.test) <angle> &amp; &#42;',
+    'first\nsecond\n\n\n# heading\n  indented\n    four space code\n\tcode\n> quote\n- list\n1. item',
+    'first\r\nsecond\rlast',
+  ])('renders literal event and episode narratives through CommonMark: %j', async (narrative) => {
+    mockSearch(
+      searchResult({
+        events: [
+          { ...helene, eventNarrative: narrative, episodeNarrative: narrative },
+          { ...sparse, episodeNarrative: narrative },
+        ],
+        totalCount: 2,
+      }),
+    );
+    const { result } = await run({ year: 2024 });
+    expect(result.events[0]?.eventNarrative).toBe(narrative);
+    expect(result.episodeNarratives).toEqual([{ ref: 'n1', text: narrative }]);
+    expect(result.events.map((event) => event.episodeNarrativeRef)).toEqual(['n1', 'n1']);
+    const html = marked.parse(firstText(noaaClimateSearchStormEvents.format!(result)), {
+      gfm: false,
+      async: false,
+    });
+    const expected = narrative
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\n/g, '<br>\n');
+    expect(html).toContain(`<strong>Event narrative:</strong> ${expected}`);
+    expect(html).toContain(`<strong>Episode narrative n1:</strong> ${expected}`);
+    expect(html).toContain('<h2>Hurricane (Typhoon)');
+  });
   const rendered = (events: StormEvent[] = [helene, tornado, sparse]) => {
     const episodeNarratives = events.flatMap((event, index) =>
       event.episodeNarrative ? [{ ref: `n${index + 1}`, text: event.episodeNarrative }] : [],
@@ -569,7 +792,7 @@ describe('noaaClimateSearchStormEvents — format()', () => {
   });
 
   it('renders both narratives', () => {
-    const text = rendered();
+    const text = marked.parse(rendered(), { gfm: false, async: false });
     expect(text).toContain('Helene made landfall as a Category 4 hurricane.');
     expect(text).toContain('Numerous trees and power lines were blown down.');
   });
@@ -601,7 +824,12 @@ describe('noaaClimateSearchStormEvents — error contract', () => {
   it('declares every reason the service can emit, and no reason it cannot', () => {
     const declared = noaaClimateSearchStormEvents.errors?.map((e) => e.reason).sort();
 
-    expect(declared).toEqual(['malformed_export', 'service_unavailable', 'year_unavailable']);
+    expect(declared).toEqual([
+      'invalid_date_range',
+      'malformed_export',
+      'service_unavailable',
+      'year_unavailable',
+    ]);
   });
 
   it('bubbles a service throw without rewriting it', async () => {

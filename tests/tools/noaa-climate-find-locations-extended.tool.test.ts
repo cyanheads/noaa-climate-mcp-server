@@ -40,8 +40,8 @@ describe('noaaClimateFindLocations — input validation', () => {
     expect(() => noaaClimateFindLocations.input.parse({ limit: 0 })).toThrow();
   });
 
-  it('rejects limit=1001', () => {
-    expect(() => noaaClimateFindLocations.input.parse({ limit: 1001 })).toThrow();
+  it('retains an oversized positive limit for handler clamping', () => {
+    expect(noaaClimateFindLocations.input.parse({ limit: 1001 }).limit).toBe(1001);
   });
 
   it('rejects negative offset', () => {

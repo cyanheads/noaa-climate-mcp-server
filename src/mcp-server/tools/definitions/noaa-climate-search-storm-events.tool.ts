@@ -7,7 +7,9 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
+  applyPageLimit,
   identifierFilter,
+  pageLimitSchema,
   searchTextFilter,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
 import { getStormEventsService } from '@/services/storm-events/storm-events-service.js';
@@ -59,16 +61,13 @@ function carriesValue(values: string[], needle: string): boolean {
 export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_events', {
   title: 'Search NOAA Storm Events',
   description:
-    'Search the NCEI Storm Events Database for one calendar year — tornadoes, hail, floods, hurricanes, winter storms, heat, and every other NWS Storm Data event type, with magnitude, direct and indirect casualties, property and crop damage, and narratives. This corpus carries discrete severe-weather events rather than CDO station observations, needs no token, and publishes one bulk file per year, so year is required. Filter by episodeId from a returned event, state (full NCEI name such as "FLORIDA", not "FL"), eventType (exact NWS label such as "Tornado", "Flash Flood", or "Hurricane (Typhoon)", case-insensitive), month, and minDamageInUsd. Damage retains its raw magnitude-suffixed cell and parsed dollar amount; unreported figures are omitted, and minDamageInUsd discloses how many unknown figures it excluded. Events reference distinct page-local episodeNarratives by episodeNarrativeRef; eventNarrative stays on each event. Optional local ISO beginDate/endDate values can feed CDO date filters; raw NCEI date-time and timezone remain available. Source row order, limit/offset pagination, and whole-year filtered totalCount are preserved.',
+    'Search the NCEI Storm Events Database for one calendar year — tornadoes, hail, floods, hurricanes, winter storms, heat, and every other NWS Storm Data event type, with magnitude, direct and indirect casualties, property and crop damage, and narratives. This corpus carries discrete severe-weather events rather than CDO station observations, needs no token, and publishes one bulk file per year, so year is required. Filter by episodeId from a returned event, state (full NCEI name such as "FLORIDA", not "FL"), eventType (exact NWS label such as "Tornado", "Flash Flood", or "Hurricane (Typhoon)", case-insensitive), begin month, inclusive local-calendar startDate/endDate overlap, and minDamageInUsd. Date bounds exclude missing, invalid, or reversed source spans before damage accounting, totals, and paging; cross-year bounds still search only the selected year export. Damage retains its raw magnitude-suffixed cell and parsed dollar amount; unreported figures are omitted, and minDamageInUsd discloses how many unknown figures it excluded. Events reference distinct page-local episodeNarratives by episodeNarrativeRef; eventNarrative stays on each event, and rendered narratives preserve literal source text. Optional local ISO beginDate/endDate values can feed CDO date filters; raw NCEI date-time and timezone remain available. Source row order, limit/offset pagination, and filtered totalCount are preserved; appliedDateRange echoes supplied bounds.',
   annotations: { readOnlyHint: true, openWorldHint: true },
 
   input: z.object({
     episodeId: z
       .string()
-      .refine(
-        (value) => /^\d*$/.test(value.trim()),
-        'Episode ID must contain only digits, or be blank.',
-      )
+      .regex(/^\s*(?:\d+\s*)?$/, 'Episode ID must contain only digits, or be blank.')
       .optional()
       .describe(
         'Exact EPISODE_ID from a returned event. Surrounding whitespace is trimmed; blank means no filter. Leading zeros are significant. Keep year supplied.',
@@ -93,6 +92,18 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       .max(12)
       .optional()
       .describe('Filter to events whose begin date falls in this month (1–12). Optional.'),
+    startDate: z.iso
+      .date()
+      .optional()
+      .describe(
+        'Inclusive local-calendar lower bound (YYYY-MM-DD): an event must end on or after this date. Rows without both valid ordered endpoints are excluded. Only the selected year export is searched.',
+      ),
+    endDate: z.iso
+      .date()
+      .optional()
+      .describe(
+        'Inclusive local-calendar upper bound (YYYY-MM-DD): an event must begin on or before this date. Rows without both valid ordered endpoints are excluded. Cross-year intervals are allowed; only year selects the export.',
+      ),
     minDamageInUsd: z
       .number()
       .min(0)
@@ -100,13 +111,11 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       .describe(
         'Filter to events whose property damage parses to at least this many dollars. Excludes every row whose damage NCEI did not report — about a fifth of a recent year — since an unreported figure cannot be shown to clear the threshold. Optional.',
       ),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
+    limit: pageLimitSchema(100)
       .default(50)
-      .describe('Maximum number of events to return (1–100). Defaults to 50.'),
+      .describe(
+        'Maximum events per page (1–100, default 50). Oversized positive integers are clamped to 100 with a notice; NOAA_CLAMP_LIMITS=false restores rejection above 100.',
+      ),
     offset: z
       .number()
       .int()
@@ -117,6 +126,21 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
 
   output: z.object({
     year: z.number().describe('The calendar year searched.'),
+    appliedDateRange: z
+      .object({
+        startDate: z.iso
+          .date()
+          .optional()
+          .describe('Inclusive lower overlap bound supplied by the caller.'),
+        endDate: z.iso
+          .date()
+          .optional()
+          .describe('Inclusive upper overlap bound supplied by the caller.'),
+      })
+      .optional()
+      .describe(
+        'The applied inclusive local-calendar overlap interval. Omitted when neither bound was supplied; year still selects one export.',
+      ),
     sourceFile: z
       .string()
       .describe(
@@ -290,10 +314,19 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
     notice: z
       .string()
       .optional()
-      .describe('Guidance when nothing matched or the page ran past the end. Omitted otherwise.'),
+      .describe(
+        'Clamp disclosure and guidance for truncation, no matches, or exhausted pages. Omitted when none applies.',
+      ),
   },
 
   errors: [
+    {
+      reason: 'invalid_date_range',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'startDate is later than endDate.',
+      recovery:
+        'Set startDate on or before endDate, or omit either bound for a one-sided interval.',
+    },
     {
       reason: 'year_unavailable',
       code: JsonRpcErrorCode.NotFound,
@@ -322,6 +355,20 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
   ],
 
   async handler(input, ctx) {
+    if (
+      input.startDate !== undefined &&
+      input.endDate !== undefined &&
+      input.startDate > input.endDate
+    ) {
+      throw ctx.fail('invalid_date_range', 'startDate must be on or before endDate.');
+    }
+    const { limit, notice: clampNotice } = applyPageLimit(
+      input.limit,
+      100,
+      'noaa_climate_search_storm_events',
+      ctx,
+    );
+    const notices: string[] = clampNotice ? [clampNotice] : [];
     const episodeId = input.episodeId?.trim();
     ctx.log.info('Searching storm events', {
       year: input.year,
@@ -337,8 +384,10 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
         ...(input.state !== undefined && { state: input.state }),
         ...(input.eventType !== undefined && { eventType: input.eventType }),
         ...(input.month !== undefined && { month: input.month }),
+        ...(input.startDate !== undefined && { startDate: input.startDate }),
+        ...(input.endDate !== undefined && { endDate: input.endDate }),
         ...(input.minDamageInUsd !== undefined && { minDamageInUsd: input.minDamageInUsd }),
-        limit: input.limit,
+        limit,
         offset: input.offset,
       },
       ctx,
@@ -350,22 +399,23 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       ctx.enrich({ excludedUnknownDamage: result.excludedUnknownDamage });
     }
 
-    // Exactly one of these branches may run: ctx.enrich.notice is last-wins, and
-    // ctx.enrich.truncated writes a notice of its own.
     if (result.totalCount > 0 && input.offset >= result.totalCount) {
       ctx.enrich({ exhausted: true });
-      ctx.enrich.notice(
+      notices.push(
         `Page is empty because offset ${input.offset} is past the end of ${result.totalCount} matching events in ${input.year}. Lower offset or reset it to 0.`,
       );
     } else if (result.totalCount === 0) {
-      ctx.enrich.notice(emptyNotice({ ...input, episodeId }, result));
+      notices.push(emptyNotice({ ...input, episodeId }, result));
     } else if (result.totalCount > input.offset + result.events.length) {
+      const guidance = `Showing events ${input.offset + 1}–${input.offset + result.events.length} of ${result.totalCount} matches in ${input.year}. Raise offset to page forward, or narrow with state, eventType, month, startDate, endDate, or minDamageInUsd.`;
       ctx.enrich.truncated({
         shown: result.events.length,
-        cap: input.limit,
-        guidance: `Showing events ${input.offset + 1}–${input.offset + result.events.length} of ${result.totalCount} matches in ${input.year}. Raise offset to page forward, or narrow with state, eventType, month, or minDamageInUsd.`,
+        cap: limit,
+        guidance,
       });
+      notices.push(guidance);
     }
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
     const refs = new Map<string, string>();
     const episodeNarratives: { ref: string; text: string }[] = [];
@@ -379,11 +429,30 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       }
       return { ...event, episodeNarrativeRef: ref };
     });
-    return { year: input.year, sourceFile: result.sourceFile, events, episodeNarratives };
+    const appliedDateRange =
+      input.startDate !== undefined || input.endDate !== undefined
+        ? {
+            ...(input.startDate !== undefined && { startDate: input.startDate }),
+            ...(input.endDate !== undefined && { endDate: input.endDate }),
+          }
+        : undefined;
+    return {
+      year: input.year,
+      sourceFile: result.sourceFile,
+      events,
+      episodeNarratives,
+      ...(appliedDateRange && { appliedDateRange }),
+    };
   },
 
   format(result) {
     const lines: string[] = [`**Year:** ${result.year} | **Source file:** ${result.sourceFile}`];
+    if (result.appliedDateRange) {
+      const { startDate, endDate } = result.appliedDateRange;
+      lines.push(
+        `**Applied date range (inclusive overlap):** ${startDate ?? 'unbounded start'} – ${endDate ?? 'unbounded end'}`,
+      );
+    }
 
     if (result.events.length === 0) {
       lines.push('', '_No records on this page._');
@@ -432,15 +501,26 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       if (event.source) lines.push(`**Reported by:** ${event.source}`);
       if (event.episodeNarrativeRef)
         lines.push(`**Episode narrative:** ${event.episodeNarrativeRef}`);
-      if (event.eventNarrative) lines.push(`**Event narrative:** ${event.eventNarrative}`);
+      if (event.eventNarrative)
+        lines.push(`**Event narrative:** ${literalNarrative(event.eventNarrative)}`);
     }
 
     for (const narrative of result.episodeNarratives) {
-      lines.push('', `**Episode narrative ${narrative.ref}:** ${narrative.text}`);
+      lines.push('', `**Episode narrative ${narrative.ref}:** ${literalNarrative(narrative.text)}`);
     }
     return [{ type: 'text', text: lines.join('\n') }];
   },
 });
+
+/** Preserve source punctuation as literal CommonMark text and each source line break. */
+function literalNarrative(text: string): string {
+  return text.replace(/[!-/:-@[-`{-~\r\n]/g, (character) => {
+    if (character === '\n') return '<br>\n';
+    // CommonMark normalizes literal carriage returns before parsing.
+    if (character === '\r') return '&#13;';
+    return `\\${character}`;
+  });
+}
 
 /** Render a count that NCEI may not have reported at all. */
 function count(value: number | undefined): string {
@@ -467,6 +547,8 @@ function emptyNotice(
     state?: string | undefined;
     eventType?: string | undefined;
     month?: number | undefined;
+    startDate?: string | undefined;
+    endDate?: string | undefined;
     minDamageInUsd?: number | undefined;
   },
   result: Pick<
@@ -479,6 +561,8 @@ function emptyNotice(
   if (input.state) applied.push(`state="${input.state}"`);
   if (input.eventType) applied.push(`eventType="${input.eventType}"`);
   if (input.month !== undefined) applied.push(`month=${input.month}`);
+  if (input.startDate !== undefined) applied.push(`startDate="${input.startDate}"`);
+  if (input.endDate !== undefined) applied.push(`endDate="${input.endDate}"`);
   if (input.minDamageInUsd !== undefined) applied.push(`minDamageInUsd=${input.minDamageInUsd}`);
 
   const parts = [
@@ -522,6 +606,8 @@ function emptyNotice(
     const narrowing: string[] = [];
     if (input.episodeId) narrowing.push(`episodeId="${input.episodeId}"`);
     if (input.month !== undefined) narrowing.push(`month=${input.month}`);
+    if (input.startDate !== undefined) narrowing.push(`startDate="${input.startDate}"`);
+    if (input.endDate !== undefined) narrowing.push(`endDate="${input.endDate}"`);
     if (input.minDamageInUsd !== undefined)
       narrowing.push(`minDamageInUsd=${input.minDamageInUsd}`);
 

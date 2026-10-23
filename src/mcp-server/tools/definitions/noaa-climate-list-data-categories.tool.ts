@@ -8,9 +8,12 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { isUpstreamTokenRejection } from '@/mcp-server/tools/definitions/shared/upstream-auth.js';
 import { upstreamOutageReason } from '@/mcp-server/tools/definitions/shared/upstream-availability.js';
 import {
+  applyPageLimit,
   identifierFilter,
   isoDateFilter,
+  pageLimitSchema,
   toCdoWireDate,
+  toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
 import { getCdoService } from '@/services/cdo/cdo-service.js';
 import { resolveCollectionTotal } from '@/services/cdo/pagination.js';
@@ -41,13 +44,11 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
       .enum(['asc', 'desc'])
       .optional()
       .describe('Sort direction. Optional; defaults to asc.'),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(1000)
+    limit: pageLimitSchema(1000)
       .default(25)
-      .describe('Maximum number of results to return (1–1000). Defaults to 25.'),
+      .describe(
+        'Maximum number of results to return (1–1000). Defaults to 25. Larger positive integers are clamped to 1000 with a notice unless NOAA_CLAMP_LIMITS=false.',
+      ),
     offset: z
       .number()
       .int()
@@ -96,7 +97,7 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
       .string()
       .optional()
       .describe(
-        'Guidance when no data categories matched — echoes applied filters and suggests how to broaden.',
+        'Page-limit adjustment and empty or exhausted-page guidance. Omitted when no guidance applies.',
       ),
   },
 
@@ -126,13 +127,36 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
     {
       reason: 'validation_error',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'A filter parameter is not recognized by the NOAA CDO API (e.g., unknown datasetId).',
+      when: 'startDate is after endDate, or a filter parameter is not recognized by NOAA CDO (e.g., unknown datasetId).',
       recovery:
         'Verify filter IDs — use noaa_climate_list_datasets to list valid datasetId values.',
     },
   ],
 
   async handler(input, ctx) {
+    if (
+      input.startDate &&
+      input.endDate &&
+      toUtcMillis(input.startDate) > toUtcMillis(input.endDate)
+    ) {
+      throw ctx.fail(
+        'validation_error',
+        `startDate "${input.startDate}" is after endDate "${input.endDate}".`,
+        {
+          startDate: input.startDate,
+          endDate: input.endDate,
+          recovery: { hint: 'Swap the values so startDate is on or before endDate, then retry.' },
+        },
+      );
+    }
+    const { limit, notice: clampNotice } = applyPageLimit(
+      input.limit,
+      1000,
+      'noaa_climate_list_data_categories',
+      ctx,
+    );
+    const notices: string[] = [];
+    if (clampNotice) notices.push(clampNotice);
     ctx.log.info('Listing data categories', {
       datasetId: input.datasetId,
       locationId: input.locationId,
@@ -147,7 +171,7 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
       enddate: toCdoWireDate(input.endDate),
       sortfield: input.sortField,
       sortorder: input.sortOrder,
-      limit: input.limit,
+      limit,
       offset: input.offset,
     };
     let response: Awaited<ReturnType<typeof service.listDataCategories>>;
@@ -177,22 +201,24 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
       (probeParams, probeCtx) => service.listDataCategories(probeParams, probeCtx),
     );
     ctx.enrich.total(totalCount);
-    // ctx.enrich.notice is last-wins — exactly one of these branches may fire.
+    // Compose every notice before the single last-wins enrichment write.
     if (exhausted) {
       ctx.enrich({ exhausted: true });
-      ctx.enrich.notice(
+      notices.push(
         `Page is empty because offset ${input.offset} is past the end of ${totalCount} matching data categories. Lower offset or reset it to 0.`,
       );
     } else if (results.length === 0) {
-      ctx.enrich.notice(
+      notices.push(
         'No data categories matched the applied filters. Try removing location, station, or date range filters to see all available categories.',
       );
     }
 
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
+
     return {
       results,
       ...(response.metadata && {
-        metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+        metadata: { resultset: { ...response.metadata.resultset, limit, offset: input.offset } },
       }),
     };
   },

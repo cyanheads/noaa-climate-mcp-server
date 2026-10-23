@@ -11,7 +11,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateFindLocations } from '@/mcp-server/tools/definitions/noaa-climate-find-locations.tool.js';
 import { firstText } from '../helpers/content.js';
@@ -170,6 +170,78 @@ describe('nameContains — matching', () => {
 });
 
 describe('nameContains — totals, pagination, and disclosure', () => {
+  it('clamps the filtered page while retaining fixed internal enumeration on later pages', async () => {
+    const impl = installCategory(CITY_COUNT);
+    const pages = [];
+    for (const offset of [0, 1000]) {
+      const result = await runToolContract(noaaClimateFindLocations, {
+        locationCategoryId: 'CITY',
+        nameContains: 'Filler',
+        limit: 1001,
+        offset,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        totalCount: 1986,
+        appliedNameFilter: 'Filler',
+        metadata: { resultset: { count: 1986, limit: 1000, offset } },
+        notice: expect.stringContaining('Requested limit 1001 was clamped to 1000'),
+      });
+      const text = result.content
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain('Requested limit 1001 was clamped to 1000');
+      expect(text).toContain('**Limit:** 1000');
+      expect(text).toContain(`**Offset:** ${offset}`);
+      expect(text).toContain('Filler');
+      pages.push(noaaClimateFindLocations.output.parse(result.structuredContent).results);
+    }
+    expect(pages[0]).toHaveLength(1000);
+    expect(pages[1]).toHaveLength(986);
+    expect(new Set(pages.flat().map((record) => record.id)).size).toBe(1986);
+    expect(
+      impl.mock.calls.map(([params]) => ({ limit: params?.limit, offset: params?.offset })),
+    ).toEqual([
+      { limit: 1000, offset: 0 },
+      { limit: 1000, offset: 1000 },
+      { limit: 1000, offset: 0 },
+      { limit: 1000, offset: 1000 },
+    ]);
+  });
+
+  it.each([
+    ['seattle', 3, 3, true, 'offset 3 is past the end of 3'],
+    ['zzzznowhere', 5, 0, undefined, 'No locations in category "CITY" contain'],
+  ] as const)(
+    'composes clamp and filtered empty-page guidance for %s',
+    async (nameContains, offset, totalCount, exhausted, guidance) => {
+      const result = await runToolContract(noaaClimateFindLocations, {
+        locationCategoryId: 'CITY',
+        nameContains,
+        limit: 1001,
+        offset,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        results: [],
+        totalCount,
+        appliedNameFilter: nameContains,
+      });
+      if (exhausted) expect(result.structuredContent).toHaveProperty('exhausted', true);
+      else expect(result.structuredContent).not.toHaveProperty('exhausted');
+      expect(result.structuredContent).toHaveProperty(
+        'notice',
+        expect.stringContaining('Requested limit 1001 was clamped to 1000'),
+      );
+      expect(result.structuredContent).toHaveProperty('notice', expect.stringContaining(guidance));
+      const text = result.content
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain('Requested limit 1001 was clamped to 1000');
+      expect(text).toContain(guidance);
+    },
+  );
+
   it('reports the post-filter count as totalCount, never the raw category size', async () => {
     const ctx = createMockContext({ errors: noaaClimateFindLocations.errors });
     const input = noaaClimateFindLocations.input.parse({

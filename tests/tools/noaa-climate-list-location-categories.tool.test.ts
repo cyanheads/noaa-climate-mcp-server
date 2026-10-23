@@ -154,7 +154,7 @@ describe('noaaClimateListLocationCategories — boundaries', () => {
 
   it('rejects out-of-range pagination at the schema', () => {
     expect(() => noaaClimateListLocationCategories.input.parse({ limit: 0 })).toThrow();
-    expect(() => noaaClimateListLocationCategories.input.parse({ limit: 1001 })).toThrow();
+    expect(noaaClimateListLocationCategories.input.parse({ limit: 1001 }).limit).toBe(1001);
     expect(() => noaaClimateListLocationCategories.input.parse({ offset: -1 })).toThrow();
     expect(() => noaaClimateListLocationCategories.input.parse({ sortField: 'count' })).toThrow();
   });

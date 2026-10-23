@@ -5,7 +5,38 @@
  * @module mcp-server/tools/definitions/shared/validation
  */
 
-import { z } from '@cyanheads/mcp-ts-core';
+import { type Context, z } from '@cyanheads/mcp-ts-core';
+import { ATTR_MCP_TOOL_NAME, createCounter } from '@cyanheads/mcp-ts-core/utils';
+import { getPaginationConfig } from '@/config/server-config.js';
+
+/** A positive integer page size; disabled clamping restores the advertised maximum. */
+export function pageLimitSchema(maximum: number) {
+  const schema = z.number().int().min(1);
+  return getPaginationConfig().clampLimits ? schema : schema.max(maximum);
+}
+
+let clampCounter: ReturnType<typeof createCounter> | undefined;
+
+/** Apply the page ceiling and record each clamp; callers compose the notice at their final write. */
+export function applyPageLimit(requested: number, maximum: number, toolName: string, ctx: Context) {
+  const limit = Math.min(requested, maximum);
+  if (requested === limit) return { limit, notice: undefined };
+  ctx.log.info('Read page limit clamped', {
+    toolName,
+    requestedLimit: requested,
+    appliedLimit: limit,
+  });
+  clampCounter ??= createCounter(
+    'noaa.pagination.limit_clamped',
+    'Read calls with a clamped page limit',
+    '{calls}',
+  );
+  clampCounter.add(1, { [ATTR_MCP_TOOL_NAME]: toolName });
+  return {
+    limit,
+    notice: `Requested limit ${requested} was clamped to ${limit}. Continue paging by increasing offset by the applied limit.`,
+  };
+}
 
 /**
  * Date forms NOAA CDO accepts: a compact `YYYYMMDD`, a dashed calendar date
@@ -45,6 +76,32 @@ const CALENDAR_MESSAGE = 'Date is not a real calendar date.';
 const BLANK_MESSAGE = 'Identifier must not be empty or whitespace-only.';
 
 const BLANK_TEXT_MESSAGE = 'Search text must not be empty or whitespace-only.';
+
+/** Comma-delimited decimal/scientific coordinates; disjoint digit branches keep matching linear. */
+const EXTENT_NUMBER = '[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?';
+const EXTENT_PATTERN = new RegExp(
+  `^\\s*${EXTENT_NUMBER}\\s*,\\s*${EXTENT_NUMBER}\\s*,\\s*${EXTENT_NUMBER}\\s*,\\s*${EXTENT_NUMBER}\\s*$`,
+);
+const EXTENT_MESSAGE =
+  'Extent must be minLat,minLon,maxLat,maxLon: four finite decimal or scientific numbers, with latitude between -90 and 90 and longitude between -180 and 180.';
+
+/** Advertise extent syntax and reject nonfinite or geographically invalid coordinates without reordering axes. */
+export function extentFilter(description: string) {
+  return z
+    .string()
+    .regex(EXTENT_PATTERN, { error: EXTENT_MESSAGE, abort: true })
+    .refine(
+      (value) =>
+        value.split(',').every((part, index) => {
+          const coordinate = Number(part);
+          return (
+            Number.isFinite(coordinate) && Math.abs(coordinate) <= (index % 2 === 0 ? 90 : 180)
+          );
+        }),
+      EXTENT_MESSAGE,
+    )
+    .describe(description);
+}
 
 /**
  * Rewrite any accepted date form to the canonical zero-padded, dashed one.

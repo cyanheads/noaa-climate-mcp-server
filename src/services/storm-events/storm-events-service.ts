@@ -180,6 +180,14 @@ export class StormEventsService {
         return;
       }
 
+      if (query.startDate !== undefined || query.endDate !== undefined) {
+        const beginDate = localCalendarDate(cell('BEGIN_YEARMONTH'), cell('BEGIN_DAY'));
+        const endDate = localCalendarDate(cell('END_YEARMONTH'), cell('END_DAY'));
+        if (!beginDate || !endDate || beginDate > endDate) return;
+        if (query.startDate !== undefined && endDate < query.startDate) return;
+        if (query.endDate !== undefined && beginDate > query.endDate) return;
+      }
+
       const damageProperty = parseDamageEstimate(cell('DAMAGE_PROPERTY'));
       if (query.minDamageInUsd !== undefined) {
         if (damageProperty?.amountInUsd === undefined) {

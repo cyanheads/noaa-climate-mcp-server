@@ -5,7 +5,7 @@
  * @module tests/tools/pagination-exhausted.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateFetchData } from '@/mcp-server/tools/definitions/noaa-climate-fetch-data.tool.js';
 import { noaaClimateFindLocations } from '@/mcp-server/tools/definitions/noaa-climate-find-locations.tool.js';
@@ -128,6 +128,80 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe.each(TOOLS)('$name — applied page limit', ({ def, method, args, noticeMatch }) => {
+  it('clamps before the request and preserves consecutive pages on both surfaces', async () => {
+    const impl = install(method, cdoPager(1002));
+    const first = await runToolContract(def, { ...args, limit: 1001, offset: 0 });
+    const next = await runToolContract(def, { ...args, limit: 1001, offset: 1000 });
+    for (const [result, offset, length] of [
+      [first, 0, 1000],
+      [next, 1000, 2],
+    ] as const) {
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        totalCount: 1002,
+        metadata: { resultset: { count: 1002, limit: 1000, offset } },
+        notice: expect.stringContaining('Requested limit 1001 was clamped to 1000'),
+      });
+      expect(def.output.parse(result.structuredContent).results).toHaveLength(length);
+      const text = result.content
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain('Requested limit 1001 was clamped to 1000');
+      expect(text).toContain('**Limit:** 1000');
+      expect(text).toContain(`**Offset:** ${offset}`);
+      expect(text).toContain(`record-${offset}`);
+      expect(text).toContain(`record-${offset + length - 1}`);
+      expect(text).not.toContain(`record-${offset + length}`);
+    }
+    expect(impl.mock.calls.map(([params]) => params)).toEqual([
+      expect.objectContaining({ limit: 1000, offset: 0 }),
+      expect.objectContaining({ limit: 1000, offset: 1000 }),
+    ]);
+  });
+
+  it.each([false, true])(
+    'composes the clamp with an empty page (exhausted=%s)',
+    async (exhausted) => {
+      const impl = exhausted ? install(method, cdoPager()) : install(method, cdoEmpty());
+      const result = await runToolContract(def, { ...args, limit: 1001, offset: 1000 });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        results: [],
+        totalCount: exhausted ? 51 : 0,
+        notice: expect.stringContaining('Requested limit 1001 was clamped to 1000'),
+      });
+      if (exhausted) expect(result.structuredContent).toHaveProperty('exhausted', true);
+      else expect(result.structuredContent).not.toHaveProperty('exhausted');
+      const text = result.content
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain('Requested limit 1001 was clamped to 1000');
+      if (exhausted) {
+        expect(text).toContain('offset 1000 is past the end of 51');
+        expect(text).not.toMatch(noticeMatch);
+      } else {
+        expect(text).toMatch(noticeMatch);
+      }
+      expect(impl).toHaveBeenCalledTimes(2);
+      expect(impl.mock.calls[0]?.[0]).toMatchObject({ limit: 1000, offset: 1000 });
+      expect(impl.mock.calls[1]?.[0]).toMatchObject({ limit: 1, offset: 0 });
+    },
+  );
+
+  it.each([0, -1, 1.5, 'many'])(
+    'rejects invalid limit %j before calling the service',
+    async (limit) => {
+      const impl = install(method, cdoPager());
+      const result = await runToolContract(def, { ...args, limit } as never);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ error: { code: -32602 } });
+      expect(firstText(result.content)).toContain('limit');
+      expect(impl).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe.each(TOOLS)('$name — exhausted page', ({ def, method, args, noticeMatch }) => {
   it('reports the true total instead of zero', async () => {
     install(method, cdoPager());
@@ -232,6 +306,22 @@ describe.each(TOOLS)('$name — genuine no-match', ({ def, method, args, noticeM
 });
 
 describe.each(TOOLS)('$name — populated page', ({ def, method, args }) => {
+  it('preserves an in-range page and its total on both contract surfaces', async () => {
+    install(method, cdoPager());
+    const result = await runToolContract(def, { ...args, limit: 3, offset: 10 });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      totalCount: 51,
+      metadata: { resultset: { count: 51, limit: 3, offset: 10 } },
+    });
+    expect(result.structuredContent).not.toHaveProperty('notice');
+    const text = firstText(result.content);
+    expect(text).toContain('**Limit:** 3');
+    expect(text).toContain('**Offset:** 10');
+    expect(text).toContain('record-10');
+    expect(text).toContain('record-12');
+  });
+
   it.each([0, 10])(
     'echoes zero-based offset %s on both surfaces without changing the page',
     async (offset) => {

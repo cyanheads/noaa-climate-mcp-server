@@ -5,14 +5,54 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
-import { describe, expect, it } from 'vitest';
+import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  applyPageLimit,
   identifierArrayFilter,
   identifierFilter,
   isoDateFilter,
   toCdoWireDate,
   toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
+
+const metric = vi.hoisted(() => ({ add: vi.fn() }));
+vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
+  createCounter: vi.fn(() => metric),
+}));
+
+describe('applyPageLimit', () => {
+  it.each([
+    [25, 1000, 25, false],
+    [1000, 1000, 1000, false],
+    [1001, 1000, 1000, true],
+    [50, 100, 50, false],
+    [100, 100, 100, false],
+    [101, 100, 100, true],
+    [Number.MAX_SAFE_INTEGER, 100, 100, true],
+  ])('applies requested=%s maximum=%s as %s', (requested, maximum, applied, clamped) => {
+    metric.add.mockClear();
+    const ctx = createMockContext();
+    const info = vi.spyOn(ctx.log, 'info');
+    const result = applyPageLimit(requested, maximum, 'noaa_climate_list_datasets', ctx);
+    expect(result.limit).toBe(applied);
+    expect(metric.add).toHaveBeenCalledTimes(clamped ? 1 : 0);
+    expect(info).toHaveBeenCalledTimes(clamped ? 1 : 0);
+    if (clamped) {
+      expect(result.notice).toContain(`Requested limit ${requested} was clamped to ${applied}`);
+      expect(result.notice).toContain('increasing offset by the applied limit');
+      expect(metric.add).toHaveBeenCalledWith(1, { 'mcp.tool.name': 'noaa_climate_list_datasets' });
+      expect(info).toHaveBeenCalledWith('Read page limit clamped', {
+        toolName: 'noaa_climate_list_datasets',
+        requestedLimit: requested,
+        appliedLimit: applied,
+      });
+    } else {
+      expect(result.notice).toBeUndefined();
+    }
+  });
+});
 
 describe('isoDateFilter', () => {
   const schema = isoDateFilter('A date.');

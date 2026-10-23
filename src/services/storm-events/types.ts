@@ -61,6 +61,9 @@ export type StormEventsQuery = {
   eventType?: string;
   /** Calendar month of the event's begin date (1–12). */
   month?: number;
+  /** Inclusive local-calendar overlap bounds within the selected year's export. */
+  startDate?: string;
+  endDate?: string;
   /** Minimum parsed property damage in dollars. Rows with no parsed figure are excluded. */
   minDamageInUsd?: number;
   limit: number;

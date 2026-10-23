@@ -3,7 +3,7 @@
  * @module tests/tools/noaa-climate-list-datasets.tool.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateListDatasets } from '@/mcp-server/tools/definitions/noaa-climate-list-datasets.tool.js';
 import { firstText } from '../helpers/content.js';
@@ -44,6 +44,178 @@ beforeEach(() => {
 });
 
 describe('noaaClimateListDatasets', () => {
+  it('composes a date-filtered empty page with the applied limit notice', async () => {
+    const result = await runToolContract(noaaClimateListDatasets, {
+      startDate: '21000101',
+      limit: 1001,
+      offset: 1000,
+    });
+    expect(result.structuredContent).toMatchObject({
+      results: [],
+      totalCount: 0,
+      metadata: { resultset: { count: 0, limit: 1000, offset: 1000 } },
+      notice: expect.stringContaining('clamped to 1000'),
+    });
+    expect(result.structuredContent).not.toHaveProperty('exhausted');
+    expect(JSON.stringify(result.content)).toContain('No datasets matched');
+    expect(JSON.stringify(result.content)).toContain('clamped to 1000');
+    expect(getCdoService().listDatasets).toHaveBeenCalledTimes(1);
+  });
+  it('shares the catalog deadline across pages and never returns a timed-out partial result', async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const signals: AbortSignal[] = [];
+    const listDatasets = vi.fn(async (_params, context) => {
+      signals.push(context.signal);
+      if (signals.length === 2)
+        deadline.abort(new DOMException('Catalog deadline reached', 'TimeoutError'));
+      return {
+        results: [mockDatasets[0]!],
+        metadata: { resultset: { count: 3, limit: 1, offset: signals.length } },
+      };
+    });
+    vi.mocked(getCdoService).mockReturnValue({ listDatasets } as unknown as ReturnType<
+      typeof getCdoService
+    >);
+    try {
+      await expect(
+        noaaClimateListDatasets.handler(
+          noaaClimateListDatasets.input.parse({ startDate: '20200101' }),
+          createMockContext({ errors: noaaClimateListDatasets.errors }),
+        ),
+      ).rejects.toMatchObject({ name: 'TimeoutError' });
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(45_000);
+      expect(signals[0]).toBe(signals[1]);
+      expect(listDatasets).toHaveBeenCalledTimes(2);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+  it.each([0, 1, 2, 3])(
+    'filters a complete two-page catalog before slicing offset %s',
+    async (offset) => {
+      const catalog = [
+        { ...mockDatasets[0]!, id: 'OLD', maxdate: '1900-01-01' },
+        { ...mockDatasets[0]!, id: 'B' },
+        { ...mockDatasets[0]!, id: 'A' },
+      ];
+      const listDatasets = vi
+        .fn()
+        .mockResolvedValueOnce({
+          results: catalog.slice(0, 2),
+          metadata: { resultset: { count: 3, limit: 2, offset: 1 } },
+        })
+        .mockResolvedValueOnce({ results: catalog.slice(2) });
+      vi.mocked(getCdoService).mockReturnValue({ listDatasets } as unknown as ReturnType<
+        typeof getCdoService
+      >);
+      const result = await runToolContract(noaaClimateListDatasets, {
+        startDate: '20200101',
+        limit: 1,
+        offset,
+        sortField: 'name',
+        sortOrder: 'desc',
+        datatypeId: ['TMAX'],
+        stationId: 'GHCND:USW00024233',
+        locationId: 'FIPS:53',
+      });
+      expect(result.isError).not.toBe(true);
+      const output = noaaClimateListDatasets.output.parse(result.structuredContent);
+      expect(output.results.map((row) => row.id)).toEqual(
+        offset === 0 ? ['B'] : offset === 1 ? ['A'] : [],
+      );
+      expect(output.metadata?.resultset).toEqual({ count: 2, limit: 1, offset });
+      expect(result.structuredContent).toMatchObject({ totalCount: 2 });
+      expect(JSON.stringify(result.content)).toContain(
+        `**Total:** 2 | **Limit:** 1 | **Offset:** ${offset}`,
+      );
+      if (offset >= 2) {
+        expect(result.structuredContent).toMatchObject({
+          exhausted: true,
+          notice: expect.stringContaining('past the end of 2'),
+        });
+        expect(JSON.stringify(result.content)).toContain('past the end of 2');
+      }
+      expect(listDatasets).toHaveBeenCalledTimes(2);
+      for (const [index, [params]] of listDatasets.mock.calls.entries()) {
+        expect(params).toEqual({
+          datatypeid: ['TMAX'],
+          stationid: 'GHCND:USW00024233',
+          locationid: 'FIPS:53',
+          sortfield: 'name',
+          sortorder: 'desc',
+          limit: 1000,
+          offset: index === 0 ? 0 : 2,
+        });
+      }
+    },
+  );
+  it('fails with recovery instead of returning a partial catalog when a later page makes no progress', async () => {
+    const listDatasets = vi
+      .fn()
+      .mockResolvedValueOnce({
+        results: mockDatasets,
+        metadata: { resultset: { count: 3, limit: 2, offset: 1 } },
+      })
+      .mockResolvedValueOnce({});
+    vi.mocked(getCdoService).mockReturnValue({ listDatasets } as unknown as ReturnType<
+      typeof getCdoService
+    >);
+    const result = await runToolContract(noaaClimateListDatasets, { startDate: '20200101' });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'service_unavailable',
+          recovery: { hint: expect.stringContaining('retry') },
+        },
+      },
+    });
+    expect(JSON.stringify(result.content)).toContain('incomplete dataset catalog');
+    expect(listDatasets).toHaveBeenCalledTimes(2);
+  });
+  it('honors caller cancellation between catalog pages', async () => {
+    const controller = new AbortController();
+    const listDatasets = vi.fn(async () => {
+      controller.abort();
+      return { results: mockDatasets, metadata: { resultset: { count: 3, limit: 2, offset: 1 } } };
+    });
+    vi.mocked(getCdoService).mockReturnValue({ listDatasets } as unknown as ReturnType<
+      typeof getCdoService
+    >);
+    await expect(
+      noaaClimateListDatasets.handler(
+        noaaClimateListDatasets.input.parse({ startDate: '20200101' }),
+        createMockContext({ errors: noaaClimateListDatasets.errors, signal: controller.signal }),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(listDatasets).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    [{ startDate: '21000101' }, []],
+    [{ endDate: '1600-1-1' }, []],
+    [{ startDate: '2024-12-31' }, ['GHCND', 'GSOM']],
+    [{ endDate: '17630101' }, ['GHCND', 'GSOM']],
+    [{ startDate: '2024-12-31T00:00:00.001' }, []],
+  ])('locally filters dataset coverage %j', async (dates, ids) => {
+    const result = await runToolContract(noaaClimateListDatasets, dates);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      results: ids.map((id) => ({ id })),
+      totalCount: ids.length,
+      metadata: { resultset: { count: ids.length, limit: 25, offset: 0 } },
+    });
+    const parsed = noaaClimateListDatasets.output.parse(result.structuredContent);
+    expect(parsed.results.map((row) => row.id)).toEqual(ids);
+    expect(JSON.stringify(result.content)).toContain(`**Total:** ${ids.length}`);
+    expect(getCdoService().listDatasets).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 1000, offset: 0 }),
+      expect.anything(),
+    );
+    const params = vi.mocked(getCdoService().listDatasets).mock.calls[0]![0];
+    expect(params).not.toHaveProperty('startdate');
+    expect(params).not.toHaveProperty('enddate');
+  });
   it.each([0, 0.9969, 1])('preserves fractional coverage %s', (datacoverage) => {
     expect(
       firstText(

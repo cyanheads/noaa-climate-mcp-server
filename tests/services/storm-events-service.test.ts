@@ -118,6 +118,30 @@ function routeFetch(overrides: Record<string, () => Response> = {}) {
 
 const baseQuery = { limit: 50, offset: 0 };
 
+/** Complete span fixtures exercise the streaming CSV path rather than a service stub. */
+function serveSpans() {
+  const header =
+    'EVENT_ID,EVENT_TYPE,STATE,EPISODE_ID,BEGIN_DATE_TIME,BEGIN_YEARMONTH,BEGIN_DAY,END_YEARMONTH,END_DAY,DAMAGE_PROPERTY';
+  const rows = [
+    'before,Flash Flood,NORTH CAROLINA,00123,raw,202409,20,202409,24,1K',
+    'inside,Flash Flood,NORTH CAROLINA,00123,raw,202409,25,202409,26,2K',
+    'after,Flash Flood,NORTH CAROLINA,00123,raw,202409,29,202410,2,3K',
+    'enclosing,Flash Flood,NORTH CAROLINA,00123,raw,202408,1,202410,1,4K',
+    'disjoint,Flash Flood,NORTH CAROLINA,00123,raw,202409,30,202410,1,',
+    'unknown,Flash Flood,NORTH CAROLINA,00123,raw,202409,25,202409,26,',
+    'missing,Flash Flood,NORTH CAROLINA,00123,raw,202409,25,,,',
+    'invalid,Flash Flood,NORTH CAROLINA,00123,raw,202409,31,202410,1,',
+    'reversed,Flash Flood,NORTH CAROLINA,00123,raw,202409,27,202409,25,',
+    'otherState,Flash Flood,TEXAS,00123,raw,202409,25,202409,26,',
+    'otherType,Flood,NORTH CAROLINA,00123,raw,202409,25,202409,26,',
+    'otherEpisode,Flash Flood,NORTH CAROLINA,00001,raw,202409,25,202409,26,',
+  ];
+  routeFetch({
+    [`${BASE}StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz`]: () =>
+      gzipResponse(`${header}\n${rows.join('\n')}\n`),
+  });
+}
+
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn());
   routeFetch();
@@ -353,6 +377,102 @@ describe('StormEventsService — damage values', () => {
 });
 
 describe('StormEventsService — filtering', () => {
+  it('filters inclusive valid-span overlap before damage counts and paging', async () => {
+    serveSpans();
+    const service = new StormEventsService(BASE);
+    const query = {
+      year: 2024,
+      state: 'north carolina',
+      eventType: 'flash flood',
+      episodeId: '00123',
+      month: 9,
+      startDate: '2024-09-24',
+      endDate: '2024-09-29',
+      minDamageInUsd: 0,
+      limit: 2,
+      offset: 0,
+    };
+    const first = await service.search(query, createMockContext());
+    expect(first.totalCount).toBe(3);
+    expect(first.excludedUnknownDamage).toBe(1);
+    expect(first.events.map((event) => event.eventId)).toEqual(['before', 'inside']);
+    const second = await service.search({ ...query, offset: 2 }, createMockContext());
+    expect(second.events.map((event) => event.eventId)).toEqual(['after']);
+    expect(second.totalCount).toBe(3);
+    const exhausted = await service.search({ ...query, offset: 3 }, createMockContext());
+    expect(exhausted.events).toEqual([]);
+    expect(exhausted.totalCount).toBe(3);
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(2);
+  });
+
+  it.each([
+    [{ startDate: '2024-09-29' }, ['after', 'enclosing', 'disjoint']],
+    [{ endDate: '2024-09-20' }, ['before', 'enclosing']],
+    [{ startDate: '2024-09-24', endDate: '2024-09-24' }, ['before', 'enclosing']],
+    [
+      { startDate: '2023-01-01', endDate: '2025-12-31' },
+      ['before', 'inside', 'after', 'enclosing', 'disjoint', 'unknown'],
+    ],
+    [{ startDate: '2025-01-01' }, []],
+  ])('supports inclusive one-sided/equal/cross-year and disjoint ranges %j', async (range, ids) => {
+    serveSpans();
+    const result = await new StormEventsService(BASE).search(
+      {
+        ...baseQuery,
+        year: 2024,
+        state: 'NORTH CAROLINA',
+        eventType: 'Flash Flood',
+        episodeId: '00123',
+        ...range,
+      },
+      createMockContext(),
+    );
+    expect(result.events.map((event) => event.eventId)).toEqual(ids);
+    expect(result.totalCount).toBe(ids.length);
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(2);
+    expect(String(vi.mocked(fetch).mock.calls[1]?.[0])).toContain('_d2024_');
+  });
+
+  it('preserves missing, invalid and reversed spans without date filters', async () => {
+    serveSpans();
+    const result = await new StormEventsService(BASE).search(
+      { ...baseQuery, year: 2024 },
+      createMockContext(),
+    );
+    expect(result.totalCount).toBe(12);
+    expect(result.events.find((event) => event.eventId === 'missing')).toMatchObject({
+      eventId: 'missing',
+      beginDate: '2024-09-25',
+    });
+    expect(result.events.find((event) => event.eventId === 'missing')?.endDate).toBeUndefined();
+    expect(result.events.find((event) => event.eventId === 'invalid')).toMatchObject({
+      eventId: 'invalid',
+      endDate: '2024-10-01',
+    });
+    expect(result.events.find((event) => event.eventId === 'invalid')?.beginDate).toBeUndefined();
+    expect(result.events.find((event) => event.eventId === 'reversed')).toMatchObject({
+      beginDate: '2024-09-27',
+      endDate: '2024-09-25',
+    });
+  });
+  it('retains rows with absent source span endpoints when no interval is supplied', async () => {
+    const result = await new StormEventsService(BASE).search(
+      { ...baseQuery, year: 2024 },
+      createMockContext(),
+    );
+    expect(result.events.map((event) => event.eventId)).toEqual([
+      '1209832',
+      '1174463',
+      '1195301',
+      '1182258',
+      '1190000',
+      '1191000',
+      '1223377',
+    ]);
+    expect(
+      result.events.every((event) => event.beginDate === undefined && event.endDate === undefined),
+    ).toBe(true);
+  });
   it('matches episode IDs literally before counts and pagination', async () => {
     const service = new StormEventsService(BASE);
     const result = await service.search(

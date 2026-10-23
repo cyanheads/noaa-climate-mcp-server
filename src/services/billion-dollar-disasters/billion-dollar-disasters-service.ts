@@ -1,7 +1,7 @@
 /**
  * @fileoverview NCEI Billion-Dollar Weather and Climate Disasters client.
  *
- * Reads the two small static CSV exports NCEI publishes for the corpus — the
+ * Reads the two small static CSV exports in NCEI’s retired 1980–2024 archive — the
  * per-event `events-*.csv` and the per-year `time-series-*.csv` — in their
  * national form and in their per-state form, and converts every cost to whole
  * US dollars on the way through.
@@ -42,9 +42,8 @@ const REQUEST_TIMEOUT_MS = 20_000;
 /**
  * How long a downloaded export stays usable.
  *
- * NCEI revises the corpus on its own schedule — a year is added once its
- * assessments settle, and prior years' CPI adjustments move with them — so the
- * cache expires rather than living for the process lifetime.
+ * The product is retired at 1980–2024. Expiry permits re-reading the archived
+ * exports without promising new years or current-price CPI rebasing.
  */
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -79,9 +78,6 @@ const COMPACT_DATE_PATTERN = /^(\d{4})(\d{2})(\d{2})$/;
 
 /** A per-state binned cost, e.g. `2000-5000`. */
 const COST_RANGE_PATTERN = /^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$/;
-
-/** Two-letter US postal code, the only form the per-state exports are named by. */
-const STATE_CODE_PATTERN = /^[A-Za-z]{2}$/;
 
 type ParsedExport = {
   sourceFile: string;
@@ -388,11 +384,6 @@ export class BillionDollarDisastersService {
 /** The export filename for a scope — national when no state code is given. */
 function exportName(kind: 'events' | 'time-series', state: string | undefined): string {
   return `${kind}-${state === undefined ? 'US' : state.trim().toUpperCase()}.csv`;
-}
-
-/** Whether a string is shaped like the postal code the per-state exports are named by. */
-export function isStateCodeShape(value: string): boolean {
-  return STATE_CODE_PATTERN.test(value.trim());
 }
 
 /**

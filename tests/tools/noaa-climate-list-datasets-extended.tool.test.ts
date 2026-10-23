@@ -39,8 +39,8 @@ describe('noaaClimateListDatasets — input validation', () => {
     expect(() => noaaClimateListDatasets.input.parse({ limit: 0 })).toThrow();
   });
 
-  it('rejects limit=1001', () => {
-    expect(() => noaaClimateListDatasets.input.parse({ limit: 1001 })).toThrow();
+  it('retains an oversized positive limit for handler clamping', () => {
+    expect(noaaClimateListDatasets.input.parse({ limit: 1001 }).limit).toBe(1001);
   });
 
   it('rejects negative offset', () => {
@@ -60,7 +60,7 @@ describe('noaaClimateListDatasets — input validation', () => {
 });
 
 describe('noaaClimateListDatasets — service params forwarding', () => {
-  it('forwards stationId and startDate/endDate filters', async () => {
+  it('forwards stationId while applying date overlap locally', async () => {
     const mockService = {
       listDatasets: vi.fn().mockResolvedValue(mockResponse),
     } as unknown as ReturnType<typeof getCdoService>;
@@ -72,16 +72,19 @@ describe('noaaClimateListDatasets — service params forwarding', () => {
       startDate: '2010-01-01',
       endDate: '2020-12-31',
     });
-    await noaaClimateListDatasets.handler(input, ctx);
+    const result = await noaaClimateListDatasets.handler(input, ctx);
+    expect(result.results.map((row) => row.id)).toEqual(['GHCND']);
 
     expect(mockService.listDatasets).toHaveBeenCalledWith(
       expect.objectContaining({
         stationid: 'GHCND:USC00450974',
-        startdate: '2010-01-01',
-        enddate: '2020-12-31',
+        limit: 1000,
+        offset: 0,
       }),
-      ctx,
+      expect.objectContaining({ requestId: ctx.requestId }),
     );
+    expect(vi.mocked(mockService.listDatasets).mock.calls[0]![0]).not.toHaveProperty('startdate');
+    expect(vi.mocked(mockService.listDatasets).mock.calls[0]![0]).not.toHaveProperty('enddate');
   });
 
   it('forwards sort params', async () => {

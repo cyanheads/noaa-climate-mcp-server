@@ -8,7 +8,7 @@
 import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateGetBillionDollarDisasters as billionDollarDisasters } from '@/mcp-server/tools/definitions/noaa-climate-get-billion-dollar-disasters.tool.js';
 import { firstText } from '../helpers/content.js';
 import { contractFailure } from '../helpers/contract-failure.js';
@@ -24,7 +24,11 @@ vi.mock(
   },
 );
 
-import { getBillionDollarDisastersService } from '@/services/billion-dollar-disasters/billion-dollar-disasters-service.js';
+import {
+  BillionDollarDisastersService,
+  getBillionDollarDisastersService,
+} from '@/services/billion-dollar-disasters/billion-dollar-disasters-service.js';
+import { TIME_SERIES_US_CSV } from '../fixtures/billion-dollar-disasters.js';
 
 const ONE_BILLION = 1_000_000_000;
 
@@ -131,6 +135,11 @@ beforeEach(() => {
   mockService({});
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
 describe('events mode — structuredContent', () => {
   it('returns individual disasters with costs in whole US dollars', async () => {
     const { result } = run({});
@@ -153,7 +162,8 @@ describe('events mode — structuredContent', () => {
     await result;
 
     expect(getEnrichment(ctx).totalCount).toBe(2);
-    expect(getEnrichment(ctx)).not.toHaveProperty('notice');
+    expect(getEnrichment(ctx).notice).toContain('retired');
+    expect(getEnrichment(ctx).notice).not.toContain('clamped');
   });
 });
 
@@ -265,6 +275,17 @@ describe('summary mode', () => {
 });
 
 describe('scope and filter forwarding', () => {
+  it.each(['CA', 'ca', ' ca ', '\uFEFF\u2028ca\u2029'])(
+    'preserves accepted state spelling %j until service normalization',
+    async (state) => {
+      const output = await run({ state, limit: 100, offset: 100 }).result;
+      expect(output.scope).toBe('CA');
+      expect(getBillionDollarDisastersService().searchEvents).toHaveBeenCalledWith(
+        { state, limit: 100, offset: 100 },
+        expect.anything(),
+      );
+    },
+  );
   it('upper-cases the state on the response and forwards it to the service', async () => {
     const searchEvents = vi.fn().mockResolvedValue({
       ...NATIONAL_SOURCE,
@@ -364,9 +385,9 @@ describe('input validation', () => {
     expect(() => parse({ minCostInUsd: -1 })).toThrow();
   });
 
-  it('rejects a limit outside 1–100', () => {
+  it('rejects nonpositive limits and accepts an oversized request for clamping', () => {
     expect(() => parse({ limit: 0 })).toThrow();
-    expect(() => parse({ limit: 101 })).toThrow();
+    expect(parse({ limit: 101 }).limit).toBe(101);
   });
 
   it('defaults to the events mode, a 50-record page, and no offset', () => {
@@ -377,22 +398,21 @@ describe('input validation', () => {
 describe('declared error contract', () => {
   it('declares exactly the reasons the handler and service can emit', () => {
     expect(billionDollarDisasters.errors?.map((entry) => entry.reason).sort()).toEqual([
-      'invalid_state_code',
       'invalid_year_range',
       'malformed_export',
       'unknown_state',
     ]);
   });
 
-  it('fails with invalid_state_code for a full state name', async () => {
+  it('rejects a full state name at argument parsing on both surfaces', async () => {
     const failure = await contractFailure(billionDollarDisasters, { state: 'California' });
 
-    expect(failure.data.reason).toBe('invalid_state_code');
-    expect(failure.data.recovery).toMatchObject({ hint: expect.stringContaining('two-letter') });
+    expect(failure.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(failure.text).toContain('state');
   });
 
-  it('fails with invalid_state_code for a three-letter code', async () => {
-    expect((await captureFailure({ state: 'CAL' })).data?.reason).toBe('invalid_state_code');
+  it('rejects a three-letter code before the handler', () => {
+    expect(() => parse({ state: 'CAL' })).toThrow();
   });
 
   it('fails with invalid_year_range when the range is inverted', async () => {
@@ -651,6 +671,249 @@ describe('definition language', () => {
 });
 
 describe('boundaries', () => {
+  it('restores the bulk ceiling on both surfaces with clamping disabled', async () => {
+    vi.resetModules();
+    vi.stubEnv('NOAA_CLAMP_LIMITS', 'false');
+    const { noaaClimateGetBillionDollarDisasters: strict } = await import(
+      '@/mcp-server/tools/definitions/noaa-climate-get-billion-dollar-disasters.tool.js'
+    );
+    expect(z.toJSONSchema(strict.input).properties?.limit).toMatchObject({ maximum: 100 });
+    for (const summary of [false, true]) {
+      const failure = await contractFailure(strict, { summary, limit: 101 });
+      expect(failure.code).toBe(JsonRpcErrorCode.InvalidParams);
+      expect(failure.text).toContain('100');
+      for (const limit of [0, -1, 1.5, 'abc'])
+        expect(strict.input.safeParse({ limit }).success).toBe(false);
+    }
+  });
+
+  it('bounds state matching CPU across whitespace shapes', () => {
+    const state = z
+      .object({ pattern: z.string() })
+      .parse(z.toJSONSchema(billionDollarDisasters.input).properties?.state);
+    const pattern = new RegExp(state.pattern);
+    for (const size of [5_000, 20_000, 80_000, 320_000]) {
+      for (const text of [
+        `${' '.repeat(size)}!`,
+        `${'\uFEFF\u2028'.repeat(size / 2)}C1`,
+        `${' '.repeat(size)}CA\n`,
+        `${' \n'.repeat(size / 2)}CA`,
+      ]) {
+        const start = process.threadCpuUsage();
+        for (let i = 0; i < 8; i++) pattern.test(text);
+        const elapsed = process.threadCpuUsage(start);
+        expect(elapsed.user + elapsed.system).toBeLessThan(250_000);
+      }
+    }
+  });
+  it.each([false, true])(
+    'composes every page notice with clamp and archive on both surfaces (summary=%s)',
+    async (summary) => {
+      for (const page of ['empty', 'exhausted', 'truncated'] as const) {
+        const records = page === 'truncated' ? (summary ? [YEAR_2024] : [HELENE]) : [];
+        const totalCount = page === 'empty' ? 0 : 200;
+        const offset = page === 'exhausted' ? 200 : 0;
+        mockService(
+          summary
+            ? {
+                searchSummaries: vi.fn().mockResolvedValue({
+                  ...NATIONAL_SUMMARY_SOURCE,
+                  summaries: records,
+                  totalCount,
+                }),
+              }
+            : {
+                searchEvents: vi.fn().mockResolvedValue({
+                  ...NATIONAL_SOURCE,
+                  disasters: records,
+                  totalCount,
+                  disasterTypesInFile: ['Drought'],
+                }),
+              },
+        );
+        const response = await runToolContract(billionDollarDisasters, {
+          summary,
+          limit: 101,
+          offset,
+          startYear: 2025,
+        });
+        expect(response.isError).not.toBe(true);
+        const output = z
+          .object({
+            notice: z.string(),
+            cap: z.number().optional(),
+            exhausted: z.boolean().optional(),
+            truncated: z.boolean().optional(),
+          })
+          .parse(response.structuredContent);
+        const text = response.content
+          .map((block) => (block.type === 'text' ? block.text : ''))
+          .join('\n');
+        for (const surface of [output.notice, text]) {
+          expect(surface).toContain('Requested limit 101 was clamped to 100');
+          expect(surface).toContain('retired');
+          expect(surface).toContain('1980–2024');
+          expect(surface).not.toContain('finishing its assessment');
+          expect(surface).toContain(
+            page === 'empty'
+              ? 'No records'
+              : page === 'exhausted'
+                ? 'offset 200'
+                : 'Showing records 1–1 of 200',
+          );
+        }
+        if (page === 'truncated') expect(output).toMatchObject({ cap: 100, truncated: true });
+        if (page === 'exhausted') expect(output.exhausted).toBe(true);
+      }
+    },
+  );
+
+  it('pages the actual CSV parser at the applied limit through first, second, last and past-end pages', async () => {
+    const csv = [
+      'Billion-Dollar Disasters 1980–2024',
+      'Cost values are in millions of dollars',
+      'Name,Disaster,Begin Date,End Date,CPI-Adjusted Cost,Unadjusted Cost,Deaths',
+      ...Array.from(
+        { length: 205 },
+        (_, index) => `Disaster ${index},Drought,20240101,20240102,1200,1000,1`,
+      ),
+    ].join('\n');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(csv)),
+    );
+    vi.mocked(getBillionDollarDisastersService).mockReturnValue(
+      new BillionDollarDisastersService(),
+    );
+    const names: string[] = [];
+    for (const offset of [0, 100, 200, 300]) {
+      const oversized = await runToolContract(billionDollarDisasters, { limit: 101, offset });
+      const ordinary = await runToolContract(billionDollarDisasters, { limit: 100, offset });
+      const shape = z.object({
+        disasters: z.array(z.object({ name: z.string(), cpiAdjustedCostInUsd: z.number() })),
+        totalCount: z.number(),
+        notice: z.string(),
+      });
+      const page = shape.parse(oversized.structuredContent);
+      expect(page.disasters).toEqual(shape.parse(ordinary.structuredContent).disasters);
+      expect(page.totalCount).toBe(205);
+      expect(page.disasters).toHaveLength(offset < 200 ? 100 : offset === 200 ? 5 : 0);
+      names.push(...page.disasters.map((record) => record.name));
+      if (offset === 0)
+        expect(page.disasters[0]).toEqual({
+          name: 'Disaster 0',
+          cpiAdjustedCostInUsd: 1_200_000_000,
+        });
+      expect(page.notice).toContain('retired');
+    }
+    expect(names).toEqual(Array.from({ length: 205 }, (_, index) => `Disaster ${index}`));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the summary parser and nested national tallies with an oversized limit', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(TIME_SERIES_US_CSV)),
+    );
+    vi.mocked(getBillionDollarDisastersService).mockReturnValue(
+      new BillionDollarDisastersService(),
+    );
+    const response = await runToolContract(billionDollarDisasters, { summary: true, limit: 101 });
+    expect(response.structuredContent).toMatchObject({
+      totalCount: 3,
+      notice: expect.stringContaining('clamped to 100'),
+    });
+    expect(response.structuredContent).toMatchObject({
+      summaries: expect.arrayContaining([
+        {
+          year: 2024,
+          byDisasterType: expect.arrayContaining([
+            expect.objectContaining({ disasterType: 'All Disasters', costInUsd: 182_700_000_000 }),
+          ]),
+        },
+      ]),
+    });
+    expect(
+      response.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n'),
+    ).toContain('$182,700,000,000 USD');
+  });
+
+  it.each([0, -1, 1.5, 'abc', Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid limit %s before service access',
+    async (limit) => {
+      const failure = await contractFailure(billionDollarDisasters, { limit });
+      expect(failure.code).toBe(JsonRpcErrorCode.InvalidParams);
+      expect(failure.text).toContain('limit');
+      expect(getBillionDollarDisastersService).not.toHaveBeenCalled();
+    },
+  );
+  it.each([false, true])(
+    'discloses the retired archive on both surfaces (summary=%s)',
+    async (summary) => {
+      const response = await runToolContract(billionDollarDisasters, { summary });
+      expect(response.isError).not.toBe(true);
+      expect(response.structuredContent).toMatchObject({
+        notice: expect.stringContaining('retired'),
+      });
+      expect(response.structuredContent).toMatchObject({
+        notice: expect.stringContaining('1980–2024'),
+      });
+      expect(
+        response.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n'),
+      ).toContain('retired');
+    },
+  );
+
+  it('advertises the state pattern and rejects invalid state shapes during parsing', () => {
+    const schema = z.toJSONSchema(billionDollarDisasters.input);
+    expect(schema.properties?.state).toMatchObject({ pattern: '^\\s*[A-Za-z]{2}\\s*$' });
+    for (const state of ['', ' ', 'C', 'CAL', 'California', 'C1']) {
+      expect(billionDollarDisasters.input.safeParse({ state }).success).toBe(false);
+    }
+  });
+
+  it.each([false, true])(
+    'keeps unknown_state and its recovery on both surfaces (summary=%s)',
+    async (summary) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('No export', { status: 404 })),
+      );
+      vi.mocked(getBillionDollarDisastersService).mockReturnValue(
+        new BillionDollarDisastersService(),
+      );
+      const failure = await contractFailure(billionDollarDisasters, { summary, state: ' zz ' });
+      expect(failure.code).toBe(JsonRpcErrorCode.NotFound);
+      expect(failure.data.reason).toBe('unknown_state');
+      expect(failure.data.recovery?.hint).toContain('Try another two-letter code');
+      expect(failure.text).toContain('unknown_state');
+      expect(failure.text).toContain('Try another two-letter code');
+      expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).toContain(
+        summary ? 'time-series-ZZ.csv' : 'events-ZZ.csv',
+      );
+    },
+  );
+
+  it.each([false, true])(
+    'clamps the bulk service page while preserving notices (summary=%s)',
+    async (summary) => {
+      const ctx = createMockContext({ errors: billionDollarDisasters.errors });
+      const log = vi.spyOn(ctx.log, 'info');
+      await billionDollarDisasters.handler(parse({ summary, limit: 101 }), ctx);
+      const service = getBillionDollarDisastersService();
+      expect(summary ? service.searchSummaries : service.searchEvents).toHaveBeenCalledWith(
+        { limit: 100, offset: 0 },
+        expect.anything(),
+      );
+      expect(getEnrichment(ctx).notice).toContain('Requested limit 101 was clamped to 100.');
+      expect(getEnrichment(ctx).notice).toContain('retired');
+      expect(log).toHaveBeenCalledWith('Read page limit clamped', {
+        toolName: 'noaa_climate_get_billion_dollar_disasters',
+        requestedLimit: 101,
+        appliedLimit: 100,
+      });
+    },
+  );
   it('notices an empty result and says what the export covers', async () => {
     mockService({
       searchEvents: vi.fn().mockResolvedValue({
@@ -735,7 +998,7 @@ describe('boundaries', () => {
     await result;
 
     const enrichment = getEnrichment(ctx);
-    expect(enrichment).not.toHaveProperty('notice');
+    expect(enrichment.notice).toContain('retired');
     expect(enrichment).not.toHaveProperty('truncated');
     expect(enrichment).not.toHaveProperty('exhausted');
   });

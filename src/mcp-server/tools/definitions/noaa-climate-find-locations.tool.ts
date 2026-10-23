@@ -8,10 +8,13 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { isUpstreamTokenRejection } from '@/mcp-server/tools/definitions/shared/upstream-auth.js';
 import { upstreamOutageReason } from '@/mcp-server/tools/definitions/shared/upstream-availability.js';
 import {
+  applyPageLimit,
   identifierFilter,
   isoDateFilter,
+  pageLimitSchema,
   searchTextFilter,
   toCdoWireDate,
+  toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
 import { getCdoService } from '@/services/cdo/cdo-service.js';
 import { resolveCollectionTotal } from '@/services/cdo/pagination.js';
@@ -78,13 +81,11 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
       .enum(['asc', 'desc'])
       .optional()
       .describe('Sort direction. Optional; defaults to asc.'),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(1000)
+    limit: pageLimitSchema(1000)
       .default(25)
-      .describe('Maximum number of results to return (1–1000). Defaults to 25.'),
+      .describe(
+        'Maximum number of results to return (1–1000). Defaults to 25. Larger positive integers are clamped to 1000 with a notice unless NOAA_CLAMP_LIMITS=false.',
+      ),
     offset: z
       .number()
       .int()
@@ -157,7 +158,7 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
       .string()
       .optional()
       .describe(
-        'Guidance when no locations matched — echoes applied filters and suggests how to broaden.',
+        'Page-limit adjustment and empty or exhausted-page guidance. Omitted when no guidance applies.',
       ),
   },
 
@@ -187,7 +188,7 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
     {
       reason: 'validation_error',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'A filter parameter is not recognized by the NOAA CDO API (e.g., unknown datacategoryId or datasetId).',
+      when: 'startDate is after endDate, or a filter parameter is not recognized by NOAA CDO (e.g., unknown datacategoryId or datasetId).',
       recovery:
         'Verify filter IDs — use noaa_climate_list_data_categories to list valid datacategoryId values and noaa_climate_list_datasets to list valid datasetId values.',
     },
@@ -208,6 +209,29 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
   ],
 
   async handler(input, ctx) {
+    if (
+      input.startDate &&
+      input.endDate &&
+      toUtcMillis(input.startDate) > toUtcMillis(input.endDate)
+    ) {
+      throw ctx.fail(
+        'validation_error',
+        `startDate "${input.startDate}" is after endDate "${input.endDate}".`,
+        {
+          startDate: input.startDate,
+          endDate: input.endDate,
+          recovery: { hint: 'Swap the values so startDate is on or before endDate, then retry.' },
+        },
+      );
+    }
+    const { limit, notice: clampNotice } = applyPageLimit(
+      input.limit,
+      1000,
+      'noaa_climate_find_locations',
+      ctx,
+    );
+    const notices: string[] = [];
+    if (clampNotice) notices.push(clampNotice);
     ctx.log.info('Finding locations', {
       locationCategoryId: input.locationCategoryId,
       datasetId: input.datasetId,
@@ -299,20 +323,22 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
       const needle = input.nameContains.toLowerCase();
       const filtered = all.filter((loc) => loc.name.toLowerCase().includes(needle));
       const filteredCount = filtered.length;
-      const page = filtered.slice(input.offset, input.offset + input.limit).map(toOutput);
+      const page = filtered.slice(input.offset, input.offset + limit).map(toOutput);
 
       ctx.enrich.total(filteredCount);
-      // ctx.enrich.notice is last-wins — exactly one of these branches may fire.
+      // Compose every notice before the single last-wins enrichment write.
       if (filteredCount > 0 && input.offset >= filteredCount) {
         ctx.enrich({ exhausted: true });
-        ctx.enrich.notice(
+        notices.push(
           `Page is empty because offset ${input.offset} is past the end of ${filteredCount} locations matching nameContains="${input.nameContains}". Lower offset or reset it to 0.`,
         );
       } else if (filteredCount === 0) {
-        ctx.enrich.notice(
+        notices.push(
           `No locations in category "${input.locationCategoryId}" contain "${input.nameContains}". Try a shorter or differently spelled fragment, or drop nameContains to browse the ${categoryCount} locations in this category.`,
         );
       }
+
+      if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
       return {
         results: page,
@@ -321,13 +347,13 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
         // internal enumeration fetch the caller never made, so relaying it
         // would report a total that is not the one this response answers.
         metadata: {
-          resultset: { count: filteredCount, limit: input.limit, offset: input.offset },
+          resultset: { count: filteredCount, limit, offset: input.offset },
         },
       };
     }
 
-    const params = { ...domainParams, limit: input.limit, offset: input.offset };
-    const response = await fetchPage(input.limit, input.offset);
+    const params = { ...domainParams, limit, offset: input.offset };
+    const response = await fetchPage(limit, input.offset);
     const results = (response.results ?? []).map(toOutput);
 
     const { totalCount, exhausted } = await resolveCollectionTotal(
@@ -337,10 +363,10 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
       (probeParams, probeCtx) => service.findLocations(probeParams, probeCtx),
     );
     ctx.enrich.total(totalCount);
-    // ctx.enrich.notice is last-wins — exactly one of these branches may fire.
+    // Compose every notice before the single last-wins enrichment write.
     if (exhausted) {
       ctx.enrich({ exhausted: true });
-      ctx.enrich.notice(
+      notices.push(
         `Page is empty because offset ${input.offset} is past the end of ${totalCount} matching locations. Lower offset or reset it to 0.`,
       );
     } else if (results.length === 0) {
@@ -348,15 +374,17 @@ export const noaaClimateFindLocations = tool('noaa_climate_find_locations', {
       if (input.locationCategoryId) filterHints.push(`category="${input.locationCategoryId}"`);
       if (input.datasetId) filterHints.push(`datasetId="${input.datasetId}"`);
       const filterStr = filterHints.length > 0 ? ` with ${filterHints.join(', ')}` : '';
-      ctx.enrich.notice(
+      notices.push(
         `No locations matched${filterStr}. Try a different locationCategoryId (e.g., ST, CITY, CNTRY) or remove date range filters.`,
       );
     }
 
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
+
     return {
       results,
       ...(response.metadata && {
-        metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+        metadata: { resultset: { ...response.metadata.resultset, limit, offset: input.offset } },
       }),
     };
   },

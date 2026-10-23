@@ -3,7 +3,8 @@
  * @module tests/tools/noaa-climate-find-stations.tool.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { z } from '@cyanheads/mcp-ts-core';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateFindStations } from '@/mcp-server/tools/definitions/noaa-climate-find-stations.tool.js';
 import { firstText } from '../helpers/content.js';
@@ -42,6 +43,104 @@ beforeEach(() => {
 });
 
 describe('noaaClimateFindStations', () => {
+  it.each(['48,-122,47,-123', '-90,170,90,-170'])(
+    'preserves empty reversed-axis query %s',
+    async (extent) => {
+      const findStations = vi.fn().mockResolvedValue({});
+      vi.mocked(getCdoService).mockReturnValue({ findStations } as unknown as ReturnType<
+        typeof getCdoService
+      >);
+      const result = await runToolContract(noaaClimateFindStations, { extent });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        results: [],
+        totalCount: 0,
+        notice: expect.stringContaining('No stations matched'),
+      });
+      expect(JSON.stringify(result.content)).toContain('No stations matched');
+      expect(findStations).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ extent }),
+        expect.anything(),
+      );
+    },
+  );
+  it('advertises decimal/scientific extent syntax to clients', () => {
+    const schema = z.toJSONSchema(noaaClimateFindStations.input, { io: 'input' });
+    const field = z
+      .object({ properties: z.object({ extent: z.object({ pattern: z.string() }) }) })
+      .parse(schema).properties.extent;
+    const pattern = new RegExp(field.pattern);
+    expect(pattern.test(' +4.75e1,-122.4,47.7,-122.1 ')).toBe(true);
+    expect(pattern.test('1,2,3')).toBe(false);
+    expect(pattern.test('1,2,3,4,5')).toBe(false);
+    expect(pattern.test('Infinity,0,1,2')).toBe(false);
+  });
+  it('bounds CPU use for long extent input', () => {
+    const cpu = () => {
+      const usage = process.threadCpuUsage();
+      return usage.user + usage.system;
+    };
+    for (const size of [1250, 5000, 20000, 80000]) {
+      const inputs = [
+        `${'9'.repeat(size)}x,0,0,0`,
+        `${' '.repeat(size)}x`,
+        `0,0,0,${'9'.repeat(size)}x\n`,
+        `${' \n'.repeat(size)}x`,
+        `${'1e+'.repeat(size)}x`,
+        `${'('.repeat(size)}x`,
+      ];
+      const before = cpu();
+      for (const extent of inputs) {
+        expect(noaaClimateFindStations.input.safeParse({ extent }).success).toBe(false);
+      }
+      expect(cpu() - before).toBeLessThan(200_000);
+    }
+  });
+  it.each([
+    '47.4,-122.4,47.5',
+    'garbage',
+    '1,2,3,4,5',
+    '1,,3,4',
+    '1,2,3,',
+    'NaN,0,1,2',
+    'Infinity,0,1,2',
+    '1e999,0,1,2',
+    '91,0,1,2',
+    '-91,0,1,2',
+    '0,-181,1,2',
+    '0,0,91,2',
+    '0,0,1,181',
+    '0x10,0,1,2',
+    '1,2,3,4\nextra',
+  ])('rejects malformed extent %j before any CDO access', async (extent) => {
+    vi.mocked(getCdoService).mockClear();
+    const result = await runToolContract(noaaClimateFindStations, { extent });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.structuredContent)).toContain('minLat,minLon,maxLat,maxLon');
+    expect(JSON.stringify(result.content)).toContain('minLat,minLon,maxLat,maxLon');
+    expect(getCdoService).not.toHaveBeenCalled();
+  });
+  it.each([
+    '47.5,-122.4,47.7,-122.1',
+    ' +47.5 , -122.4 , 47.7 , -122.1 ',
+    '4.75e1,-1.224e2,4.77e1,-1.221e2',
+    '-90,-180,+90,+180',
+    '47.5,-122.4,47.5,-122.4',
+    '48,-122,47,-123',
+    '-90,170,90,-170',
+    '.5,-.5,+.7,-.1',
+  ])('preserves accepted extent %j verbatim', async (extent) => {
+    const result = await runToolContract(noaaClimateFindStations, { extent });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      results: [{ id: 'GHCND:USC00450974' }, { id: 'GHCND:USC00456789' }],
+    });
+    expect(JSON.stringify(result.content)).toContain('GHCND:USC00450974');
+    expect(getCdoService().findStations).toHaveBeenCalledWith(
+      expect.objectContaining({ extent }),
+      expect.anything(),
+    );
+  });
   it.each([0, 0.9969, 1])(
     'preserves coordinate and coverage precision %s on both surfaces',
     async (datacoverage) => {

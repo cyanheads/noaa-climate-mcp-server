@@ -48,15 +48,15 @@ describe('noaaClimateFetchData — input validation', () => {
     ).toThrow();
   });
 
-  it('rejects limit=1001 (above maximum 1000)', () => {
-    expect(() =>
+  it('retains an oversized positive limit for handler clamping', () => {
+    expect(
       noaaClimateFetchData.input.parse({
         datasetId: 'GHCND',
         startDate: '2023-01-01',
         endDate: '2023-01-31',
         limit: 1001,
-      }),
-    ).toThrow();
+      }).limit,
+    ).toBe(1001);
   });
 
   it('rejects negative offset', () => {

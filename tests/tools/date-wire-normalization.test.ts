@@ -102,6 +102,12 @@ describe.each(TOOLS)('$name — date wire form', ({ def, method, args }) => {
 
     await def.handler(input as never, ctx as never);
 
+    if (def === noaaClimateListDatasets) {
+      expect(impl.mock.calls[0]![0]).not.toHaveProperty('startdate');
+      expect(impl.mock.calls[0]![0]).not.toHaveProperty('enddate');
+      expect(impl.mock.calls[0]![0]).toMatchObject({ limit: 1000, offset: 0 });
+      return;
+    }
     expect(impl.mock.calls[0]![0]).toMatchObject({
       startdate: '2024-07-01',
       enddate: '2024-07-07',
@@ -118,10 +124,14 @@ describe.each(TOOLS)('$name — date wire form', ({ def, method, args }) => {
       endDate: '2024-07-07T23:59:59.500',
     });
     await def.handler(canonical as never, ctx as never);
-    expect(impl.mock.calls[0]![0]).toMatchObject({
-      startdate: '2024-07-01T12:30:45',
-      enddate: '2024-07-07T23:59:59.500',
-    });
+    expect(impl.mock.calls[0]![0]).toMatchObject(
+      def === noaaClimateListDatasets
+        ? { limit: 1000, offset: 0 }
+        : {
+            startdate: '2024-07-01T12:30:45',
+            enddate: '2024-07-07T23:59:59.500',
+          },
+    );
 
     const unpadded = def.input.parse({
       ...args,
@@ -129,10 +139,14 @@ describe.each(TOOLS)('$name — date wire form', ({ def, method, args }) => {
       endDate: '2024-7-7T23:59:59',
     });
     await def.handler(unpadded as never, ctx as never);
-    expect(impl.mock.calls[1]![0]).toMatchObject({
-      startdate: '2024-07-01T12:30:45',
-      enddate: '2024-07-07T23:59:59',
-    });
+    expect(impl.mock.calls[1]![0]).toMatchObject(
+      def === noaaClimateListDatasets
+        ? { limit: 1000, offset: 0 }
+        : {
+            startdate: '2024-07-01T12:30:45',
+            enddate: '2024-07-07T23:59:59',
+          },
+    );
   });
 });
 

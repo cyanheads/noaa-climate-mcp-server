@@ -1,20 +1,24 @@
 /**
  * @fileoverview Query NOAA's Billion-Dollar Weather and Climate Disasters —
- * the curated, CPI-adjusted record of US disasters that passed $1B in damage.
+ * the retired 1980–2024 archive of US disasters that passed $1B in damage.
  * @module mcp-server/tools/definitions/noaa-climate-get-billion-dollar-disasters
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { identifierFilter } from '@/mcp-server/tools/definitions/shared/validation.js';
 import {
-  getBillionDollarDisastersService,
-  isStateCodeShape,
-} from '@/services/billion-dollar-disasters/billion-dollar-disasters-service.js';
+  applyPageLimit,
+  pageLimitSchema,
+} from '@/mcp-server/tools/definitions/shared/validation.js';
+import { getBillionDollarDisastersService } from '@/services/billion-dollar-disasters/billion-dollar-disasters-service.js';
 import { DISASTER_TYPES } from '@/services/billion-dollar-disasters/types.js';
 
 /** The first year NCEI's assessment covers. */
 const FIRST_COVERED_YEAR = 1980;
+
+/** NOAA retired this product after calendar year 2024; costs retain the archived adjustment. */
+const ARCHIVE_NOTICE =
+  'NOAA retired the Billion-Dollar Weather and Climate Disasters product after 2024. The 1980–2024 archive remains available; no later years are added. CPI-adjusted costs retain the archived export’s adjustment, without rebasing to current prices.';
 
 /** Render whole dollars with thousands separators, without depending on locale data. */
 function usd(value: number): string {
@@ -51,7 +55,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
   {
     title: 'Get NOAA Billion-Dollar Disasters',
     description:
-      'Query NOAA/NCEI’s Billion-Dollar Weather and Climate Disasters — the curated record of US disasters whose damage passed $1 billion, with CPI-adjusted and unadjusted costs, deaths, and one of seven classes (Drought, Flooding, Freeze, Severe Storm, Tropical Cyclone, Wildfire, Winter Storm). Every cost returned is in WHOLE US DOLLARS: NCEI declares a different unit in each export — millions for the per-event file, billions for the national per-year file — and this server converts from whichever unit the file declares, echoing it back as declaredCostUnit. Default calls return individual disasters; summary=true returns per-year counts and costs by class plus an "All Disasters" total. Filter with startYear/endYear (a disaster overlapping either end is included), disasterType (exactly as NCEI writes it, e.g. "Tropical Cyclone"), minCostInUsd, and state (a two-letter US postal code). Coverage runs from 1980 to the last year NCEI has finished assessing — currently 2024, not the current calendar year — and coveredYears reports what the export holds. Under a state scope, per-event rows are national disasters that reached that state and carry the NATIONAL cost, never a state share, so summing states double-counts; per-year rows carry a binned cost range instead of a point estimate. This is a different NOAA corpus from the CDO tools and from noaa_climate_search_storm_events: no token, and the curated set of major disasters rather than every severe-weather event.',
+      'Query NOAA/NCEI’s retired Billion-Dollar Weather and Climate Disasters archive (1980–2024), with CPI-adjusted and unadjusted costs and deaths. No years after 2024 are added; CPI adjustments are preserved from the archive, not rebased to current prices. Every cost is in WHOLE US DOLLARS, converted from each export’s declared unit (declaredCostUnit): millions per event, billions per national year, millions per state year. Default calls return individual disasters; summary=true returns per-year counts and costs by class plus an "All Disasters" total. Filter with startYear/endYear (overlapping disasters included), disasterType (exact NCEI class, e.g. "Tropical Cyclone"), minCostInUsd, and state (two-letter postal code). coveredYears reports the span actually present in the export. Under a state scope, per-event rows carry the NATIONAL cost of disasters that reached that state, never a state share, so summing states double-counts; per-year rows carry a binned range instead of a point estimate. Separate from CDO and noaa_climate_search_storm_events; no token required.',
     annotations: { readOnlyHint: true, openWorldHint: true },
 
     input: z.object({
@@ -69,7 +73,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         .min(FIRST_COVERED_YEAR)
         .optional()
         .describe(
-          'Latest year to include (1980 or later). NCEI publishes a year only once its assessment settles, so a year past coveredYears.last returns nothing rather than an error. Optional.',
+          'Latest year to include (1980 or later). The retired archive ends in 2024; years past coveredYears.last return no records rather than an error. Optional.',
         ),
       disasterType: z
         .enum(DISASTER_TYPES)
@@ -77,9 +81,13 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         .describe(
           'Restrict to one NCEI disaster class, written exactly as NCEI writes it. In summary mode this also drops the "All Disasters" total from each year, leaving only the named class. Optional.',
         ),
-      state: identifierFilter(
-        'Two-letter US postal code (e.g. "CA", "TX", "PR") scoping the query to NCEI’s per-state export instead of the national one. Per-event rows then carry the national cost of each disaster that reached the state, not a state share; per-year rows carry a binned cost range instead of a point estimate. Optional.',
-      ).optional(),
+      state: z
+        .string()
+        .regex(/^\s*[A-Za-z]{2}\s*$/)
+        .describe(
+          'Two-letter US postal code (e.g. "CA", "TX", "PR") scoping the query to NCEI’s per-state export instead of the national one. Per-event rows then carry the national cost of each disaster that reached the state, not a state share; per-year rows carry a binned cost range instead of a point estimate. Optional.',
+        )
+        .optional(),
       minCostInUsd: z
         .number()
         .min(0)
@@ -93,13 +101,11 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         .describe(
           'Return per-year counts and costs by disaster class instead of individual disasters. Defaults to false.',
         ),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
+      limit: pageLimitSchema(100)
         .default(50)
-        .describe('Maximum number of disasters or years to return (1–100). Defaults to 50.'),
+        .describe(
+          'Maximum number of disasters or years to return (1–100). Defaults to 50. Larger positive integers are clamped to 100 with a notice unless NOAA_CLAMP_LIMITS=false.',
+        ),
       offset: z
         .number()
         .int()
@@ -131,7 +137,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
           last: z
             .number()
             .describe(
-              'Latest year present in the export — the last year NCEI has finished assessing, which trails the current calendar year.',
+              'Latest year present in this archived export. The retired product covers no years after 2024.',
             ),
         })
         .describe('The year span the export actually holds, read from its rows.'),
@@ -156,7 +162,7 @@ export const noaaClimateGetBillionDollarDisasters = tool(
               cpiAdjustedCostInUsd: z
                 .number()
                 .describe(
-                  'Damage in whole US dollars, adjusted to present-day prices. This is the figure comparable across years.',
+                  'Damage in whole US dollars with the CPI adjustment preserved from the archived NCEI export; not rebased to current prices.',
                 ),
               unadjustedCostInUsd: z
                 .number()
@@ -234,17 +240,12 @@ export const noaaClimateGetBillionDollarDisasters = tool(
       notice: z
         .string()
         .optional()
-        .describe('Guidance when nothing matched or the page ran past the end. Omitted otherwise.'),
+        .describe(
+          'Archive retirement and preserved CPI-adjustment disclosure, composed with any clamp, empty-page, exhaustion, or truncation guidance.',
+        ),
     },
 
     errors: [
-      {
-        reason: 'invalid_state_code',
-        code: JsonRpcErrorCode.ValidationError,
-        when: 'state was supplied in a form other than a two-letter US postal code.',
-        recovery:
-          'Pass the two-letter postal code — "CA" for California, "NY" for New York — or omit state for the national record.',
-      },
       {
         reason: 'unknown_state',
         code: JsonRpcErrorCode.NotFound,
@@ -278,18 +279,6 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         endYear: input.endYear,
       });
 
-      // Cross-field and format rules live here rather than in a schema
-      // .refine(): input parsing runs before ctx exists, so a schema-level
-      // rejection arrives as a bare InvalidParams and cannot carry the declared
-      // recovery hint.
-      if (input.state !== undefined && !isStateCodeShape(input.state)) {
-        throw ctx.fail(
-          'invalid_state_code',
-          `state "${input.state}" is not a two-letter US postal code. NCEI names its per-state exports by postal code, so a full state name or an abbreviation of another length addresses no export.`,
-          { state: input.state },
-        );
-      }
-
       if (
         input.startYear !== undefined &&
         input.endYear !== undefined &&
@@ -302,13 +291,20 @@ export const noaaClimateGetBillionDollarDisasters = tool(
         );
       }
 
+      const { limit, notice: clampNotice } = applyPageLimit(
+        input.limit,
+        100,
+        'noaa_climate_get_billion_dollar_disasters',
+        ctx,
+      );
+      const notices: string[] = clampNotice ? [clampNotice] : [];
       const query = {
         ...(input.state !== undefined && { state: input.state }),
         ...(input.startYear !== undefined && { startYear: input.startYear }),
         ...(input.endYear !== undefined && { endYear: input.endYear }),
         ...(input.disasterType !== undefined && { disasterType: input.disasterType }),
         ...(input.minCostInUsd !== undefined && { minCostInUsd: input.minCostInUsd }),
-        limit: input.limit,
+        limit,
         offset: input.offset,
       };
 
@@ -322,22 +318,25 @@ export const noaaClimateGetBillionDollarDisasters = tool(
 
       ctx.enrich.total(result.totalCount);
 
-      // Exactly one of these branches may run: ctx.enrich.notice is last-wins,
-      // and ctx.enrich.truncated writes a notice of its own.
       if (result.totalCount > 0 && input.offset >= result.totalCount) {
         ctx.enrich({ exhausted: true });
-        ctx.enrich.notice(
+        notices.push(
           `Page is empty because offset ${input.offset} is past the end of ${result.totalCount} matching records in ${result.sourceFile}. Lower offset or reset it to 0.`,
         );
       } else if (result.totalCount === 0) {
-        ctx.enrich.notice(emptyNotice(input, result));
+        notices.push(emptyNotice(input, result));
       } else if (result.totalCount > input.offset + shown) {
+        const guidance = `Showing records ${input.offset + 1}–${input.offset + shown} of ${result.totalCount} matches in ${result.sourceFile}. Raise offset to page forward, or narrow with startYear/endYear, disasterType, or minCostInUsd.`;
         ctx.enrich.truncated({
           shown,
-          cap: input.limit,
-          guidance: `Showing records ${input.offset + 1}–${input.offset + shown} of ${result.totalCount} matches in ${result.sourceFile}. Raise offset to page forward, or narrow with startYear/endYear, disasterType, or minCostInUsd.`,
+          cap: limit,
+          guidance,
         });
+        notices.push(guidance);
       }
+      notices.push(ARCHIVE_NOTICE);
+      // truncated() writes a notice too; the final write preserves every contribution.
+      ctx.enrich.notice(notices.join(' '));
 
       const source = {
         mode: input.summary ? ('summary' as const) : ('events' as const),
@@ -455,11 +454,10 @@ function emptyNotice(
     );
   }
 
-  // A range that starts after the export ends is the common miss: NCEI adds a
-  // year only once its assessment settles, so "this year" is normally absent.
+  // Coverage is read from the rows, which can differ between archived scopes.
   if (input.startYear !== undefined && input.startYear > result.lastYear) {
     parts.push(
-      `The export covers ${result.firstYear}–${result.lastYear}; startYear=${input.startYear} is past the end of it, because NCEI publishes a year only after finishing its assessment.`,
+      `The export covers ${result.firstYear}–${result.lastYear}; startYear=${input.startYear} is past the end of this archived export.`,
     );
   } else if (input.endYear !== undefined && input.endYear < result.firstYear) {
     parts.push(

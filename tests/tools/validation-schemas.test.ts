@@ -5,7 +5,7 @@
  * @module tests/tools/validation-schemas.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateFetchData } from '@/mcp-server/tools/definitions/noaa-climate-fetch-data.tool.js';
 import { noaaClimateFindLocations } from '@/mcp-server/tools/definitions/noaa-climate-find-locations.tool.js';
@@ -69,7 +69,13 @@ const DATE_FILTER_TOOLS = [
 ] as const;
 
 beforeEach(() => {
+  const empty = vi.fn().mockResolvedValue({ results: [] });
   vi.mocked(getCdoService).mockReturnValue({
+    listDatasets: empty,
+    listDataCategories: empty,
+    listDataTypes: empty,
+    findLocations: empty,
+    findStations: empty,
     fetchData: vi.fn().mockResolvedValue({
       results: [],
       metadata: { resultset: { count: 0, limit: 25, offset: 0 } },
@@ -78,6 +84,50 @@ beforeEach(() => {
 });
 
 describe.each(DATE_FILTER_TOOLS)('%s — date filter validation', (_name, def) => {
+  it.each([
+    ['2024-12-31', '2024-01-01'],
+    ['20240101', '2023-12-31'],
+    ['2024-1-1T00:00:00.001', '20240101'],
+  ])('rejects reversed %s through %s before service access', async (startDate, endDate) => {
+    vi.mocked(getCdoService).mockClear();
+    const result = await runToolContract(def, { startDate, endDate });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'validation_error',
+          startDate,
+          endDate,
+          recovery: { hint: expect.stringContaining('Swap') },
+        },
+      },
+    });
+    const content = JSON.stringify(result.content);
+    expect(content).toContain(startDate);
+    expect(content).toContain(endDate);
+    expect(content).toContain('Swap');
+    expect(getCdoService).not.toHaveBeenCalled();
+  });
+  it.each([
+    { startDate: '20240101', endDate: '2024-1-1T00:00:00.000' },
+    { startDate: '2024-1-1', endDate: '20240102' },
+    { startDate: '20240101' },
+    { endDate: '2024-1-1' },
+  ])('preserves valid discovery dates %j', async (args) => {
+    const fetchPage = vi.fn().mockResolvedValue({ results: [] });
+    vi.mocked(getCdoService).mockReturnValue({
+      listDatasets: fetchPage,
+      listDataCategories: fetchPage,
+      listDataTypes: fetchPage,
+      findLocations: fetchPage,
+      findStations: fetchPage,
+    } as unknown as ReturnType<typeof getCdoService>);
+    const result = await runToolContract(def, args);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ results: [], totalCount: 0 });
+    expect(JSON.stringify(result.content)).toContain('No records on this page');
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
   it.each(ACCEPTED_DATES)('accepts startDate=%s', (date) => {
     expect(() => def.input.parse({ startDate: date })).not.toThrow();
   });
@@ -150,8 +200,9 @@ describe('scalar identifier filters reject empty and whitespace-only values', ()
   });
 
   it.each(cases)('%s accepts a real identifier unmodified', (_label, def, field) => {
-    const parsed = def.input.parse({ [field]: 'GHCND:USC00450974' }) as Record<string, unknown>;
-    expect(parsed[field]).toBe('GHCND:USC00450974');
+    const value = field === 'extent' ? '47.5,-122.4,47.7,-122.1' : 'GHCND:USC00450974';
+    const parsed = def.input.parse({ [field]: value }) as Record<string, unknown>;
+    expect(parsed[field]).toBe(value);
   });
 
   it('noaa_climate_get_station.stationId already rejects empty (reference pattern)', () => {

@@ -8,9 +8,11 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { isUpstreamTokenRejection } from '@/mcp-server/tools/definitions/shared/upstream-auth.js';
 import { upstreamOutageReason } from '@/mcp-server/tools/definitions/shared/upstream-availability.js';
 import {
+  applyPageLimit,
   identifierArrayFilter,
   identifierFilter,
   isoDateFilter,
+  pageLimitSchema,
   toCdoWireDate,
   toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
@@ -142,13 +144,11 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       .enum(['asc', 'desc'])
       .optional()
       .describe('Sort direction. Optional; defaults to asc.'),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(1000)
+    limit: pageLimitSchema(1000)
       .default(25)
-      .describe('Maximum number of records to return (1–1000). Defaults to 25.'),
+      .describe(
+        'Maximum number of records to return (1–1000). Defaults to 25. Larger positive integers are clamped to 1000 with a notice unless NOAA_CLAMP_LIMITS=false.',
+      ),
     offset: z
       .number()
       .int()
@@ -212,7 +212,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       .string()
       .optional()
       .describe(
-        'Guidance when no records were returned — echoes query parameters and suggests how to broaden.',
+        'Page-limit adjustment and empty or exhausted-page guidance. Omitted when no guidance applies.',
       ),
   },
 
@@ -256,6 +256,14 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
   ],
 
   async handler(input, ctx) {
+    const { limit, notice: clampNotice } = applyPageLimit(
+      input.limit,
+      1000,
+      'noaa_climate_fetch_data',
+      ctx,
+    );
+    const notices: string[] = [];
+    if (clampNotice) notices.push(clampNotice);
     ctx.log.info('Fetching data', {
       datasetId: input.datasetId,
       startDate: input.startDate,
@@ -332,7 +340,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       includemetadata: true,
       sortfield: input.sortField,
       sortorder: input.sortOrder,
-      limit: input.limit,
+      limit,
       offset: input.offset,
     };
     let response: Awaited<ReturnType<typeof service.fetchData>>;
@@ -382,17 +390,19 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
     const effectiveQuery = queryParts.join(', ');
     ctx.enrich.echo(effectiveQuery);
 
-    // ctx.enrich.notice is last-wins — exactly one of these branches may fire.
+    // Compose every notice before the single last-wins enrichment write.
     if (exhausted) {
       ctx.enrich({ exhausted: true });
-      ctx.enrich.notice(
+      notices.push(
         `Page is empty because offset ${input.offset} is past the end of ${totalCount} matching records. Lower offset or reset it to 0.`,
       );
     } else if (results.length === 0) {
-      ctx.enrich.notice(
+      notices.push(
         `No observation records found for ${effectiveQuery}. Verify the station has data for this dataset and date range using noaa_climate_find_stations, or try a different datatypeId.`,
       );
     }
+
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
     return {
       results,
@@ -400,7 +410,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       // metadata object CDO did not send (an exhausted page carries none).
       ...(input.includemetadata &&
         response.metadata && {
-          metadata: { resultset: { ...response.metadata.resultset, offset: input.offset } },
+          metadata: { resultset: { ...response.metadata.resultset, limit, offset: input.offset } },
         }),
     };
   },

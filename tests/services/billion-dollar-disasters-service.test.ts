@@ -432,7 +432,7 @@ describe('filtering and paging', () => {
     const result = await service().searchEvents(query(), createMockContext());
 
     expect(result.firstYear).toBe(1980);
-    // The corpus ends at the last fully assessed year, not the current one.
+    // NOAA retired this archive after calendar year 2024.
     expect(result.lastYear).toBe(2024);
   });
 

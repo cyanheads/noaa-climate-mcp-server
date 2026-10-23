@@ -5,6 +5,7 @@
  */
 
 import { createApp } from '@cyanheads/mcp-ts-core';
+import { getPaginationConfig } from './config/server-config.js';
 import { noaaDatasetsResource } from './mcp-server/resources/definitions/noaa-datasets.resource.js';
 import { noaaStationResource } from './mcp-server/resources/definitions/noaa-station.resource.js';
 import { noaaClimateFetchData } from './mcp-server/tools/definitions/noaa-climate-fetch-data.tool.js';
@@ -45,10 +46,11 @@ Discovery: noaa_climate_list_datasets → noaa_climate_list_data_categories → 
 Location categories: noaa_climate_list_location_categories enumerates the 12 valid locationCategoryId values.
 Date range limits: daily datasets (GHCND etc.) max 1 year per request; monthly/annual (GSOM, GSOY) max 10 years.
 Always pass units=metric or units=standard to noaa_climate_fetch_data — raw GHCND values are tenths-of-unit integers.
-Severe-weather events are a separate corpus: noaa_climate_search_storm_events reads the NCEI Storm Events Database (tornado, hail, flood, hurricane damage and casualties), needs no token, and requires a year.
-Disaster costs are a third corpus: noaa_climate_get_billion_dollar_disasters reads NCEI's Billion-Dollar Weather and Climate Disasters (1980 through the last fully assessed year), needs no token, and reports every cost in whole US dollars.`,
+Severe-weather events are a separate corpus: noaa_climate_search_storm_events reads the NCEI Storm Events Database (tornado, hail, flood, hurricane damage and casualties), needs no token, and requires a year selecting one export. Optional YYYY-MM-DD startDate/endDate match inclusive event-span overlap; missing or invalid source spans are excluded only when a date bound is active.
+Disaster costs are a third corpus: noaa_climate_get_billion_dollar_disasters reads NCEI's retired Billion-Dollar Weather and Climate Disasters archive (1980–2024), needs no token, and reports every cost in whole US dollars. No years after 2024 are added; CPI-adjusted costs preserve the archive's adjustment without rebasing to current prices.`,
   landing: { requireAuth: false },
   setup() {
+    getPaginationConfig();
     initCdoService();
     initStormEventsService();
     initBillionDollarDisastersService();
