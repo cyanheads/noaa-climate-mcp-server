@@ -11,7 +11,10 @@ import {
   applyPageLimit,
   identifierFilter,
   isoDateFilter,
+  normalizeStationId,
   pageLimitSchema,
+  stationIdFilter,
+  stationNormalizationNotice,
   toCdoWireDate,
   toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
@@ -33,7 +36,7 @@ export const noaaClimateListDataTypes = tool('noaa_climate_list_data_types', {
     locationId: identifierFilter(
       'Filter to data types available at this location ID. Optional.',
     ).optional(),
-    stationId: identifierFilter(
+    stationId: stationIdFilter(
       'Filter to data types available at this station ID. Optional.',
     ).optional(),
     startDate: isoDateFilter(
@@ -117,7 +120,7 @@ export const noaaClimateListDataTypes = tool('noaa_climate_list_data_types', {
       .string()
       .optional()
       .describe(
-        'Page-limit adjustment and empty or exhausted-page guidance. Omitted when no guidance applies.',
+        'Station ID normalization, page-limit adjustment, and empty or exhausted-page guidance. Omitted when no guidance applies.',
       ),
   },
 
@@ -177,6 +180,12 @@ export const noaaClimateListDataTypes = tool('noaa_climate_list_data_types', {
     );
     const notices: string[] = [];
     if (clampNotice) notices.push(clampNotice);
+    const stationId =
+      input.stationId === undefined ? undefined : normalizeStationId(input.stationId);
+    const stationNotice = stationNormalizationNotice(
+      input.stationId === undefined ? [] : [input.stationId],
+    );
+    if (stationNotice) notices.push(stationNotice);
     ctx.log.info('Listing data types', {
       datasetId: input.datasetId,
       datacategoryId: input.datacategoryId,
@@ -187,7 +196,7 @@ export const noaaClimateListDataTypes = tool('noaa_climate_list_data_types', {
       datasetid: input.datasetId,
       datacategoryid: input.datacategoryId,
       locationid: input.locationId,
-      stationid: input.stationId,
+      stationid: stationId,
       startdate: toCdoWireDate(input.startDate),
       enddate: toCdoWireDate(input.endDate),
       sortfield: input.sortField,

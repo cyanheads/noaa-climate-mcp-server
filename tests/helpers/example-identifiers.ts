@@ -31,11 +31,13 @@ export const DOCUMENTED_SOURCE_FILES = [
   'src/mcp-server/tools/definitions/noaa-climate-list-datasets.tool.ts',
   'src/mcp-server/tools/definitions/noaa-climate-list-location-categories.tool.ts',
   'src/mcp-server/tools/definitions/noaa-climate-search-storm-events.tool.ts',
+  'src/mcp-server/tools/definitions/shared/validation.ts',
   'src/mcp-server/resources/definitions/noaa-datasets.resource.ts',
   'src/mcp-server/resources/definitions/noaa-station.resource.ts',
   'src/index.ts',
   'README.md',
   'docs/design.md',
+  'skills/noaa-climate-guide/SKILL.md',
 ];
 
 /**
@@ -68,6 +70,7 @@ export const ID_PREFIX_ENDPOINTS: Record<string, string> = {
   COOP: 'stations',
   WBAN: 'stations',
   ICAO: 'stations',
+  NEXRAD: 'stations',
 };
 
 /**

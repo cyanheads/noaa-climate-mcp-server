@@ -12,7 +12,10 @@ import {
   identifierArrayFilter,
   identifierFilter,
   isoDateFilter,
+  normalizeStationId,
   pageLimitSchema,
+  stationIdFilter,
+  stationNormalizationNotice,
   toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
 import { getCdoService } from '@/services/cdo/cdo-service.js';
@@ -30,7 +33,7 @@ export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
     locationId: identifierFilter(
       'Filter to datasets covering this location ID (e.g., "FIPS:37" for NC). Optional.',
     ).optional(),
-    stationId: identifierFilter(
+    stationId: stationIdFilter(
       'Filter to datasets covering this station ID (e.g., "GHCND:USW00024233"). Optional.',
     ).optional(),
     startDate: isoDateFilter(
@@ -105,7 +108,7 @@ export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
       .string()
       .optional()
       .describe(
-        'Page-limit adjustment and empty or exhausted-page guidance. Omitted when no guidance applies.',
+        'Station ID normalization, page-limit adjustment, and empty or exhausted-page guidance. Omitted when no guidance applies.',
       ),
   },
 
@@ -164,6 +167,12 @@ export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
     );
     const notices: string[] = [];
     if (clampNotice) notices.push(clampNotice);
+    const stationId =
+      input.stationId === undefined ? undefined : normalizeStationId(input.stationId);
+    const stationNotice = stationNormalizationNotice(
+      input.stationId === undefined ? [] : [input.stationId],
+    );
+    if (stationNotice) notices.push(stationNotice);
     ctx.log.info('Listing datasets', {
       datatypeId: input.datatypeId,
       locationId: input.locationId,
@@ -174,7 +183,7 @@ export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
     const params = {
       datatypeid: input.datatypeId,
       locationid: input.locationId,
-      stationid: input.stationId,
+      stationid: stationId,
       sortfield: input.sortField,
       sortorder: input.sortOrder,
       limit,

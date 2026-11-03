@@ -31,9 +31,10 @@ describe('identifier extraction', () => {
   });
 
   it('picks up station identifier forms', () => {
-    expect(idsIn('e.g. "GHCND:USW00024233", "COOP:010008"')).toEqual([
+    expect(idsIn('e.g. "GHCND:USW00024233", "COOP:010008", "NEXRAD:KATX"')).toEqual([
       'GHCND:USW00024233',
       'COOP:010008',
+      'NEXRAD:KATX',
     ]);
   });
 
@@ -63,6 +64,7 @@ describe('identifier extraction', () => {
     expect(ID_PREFIX_ENDPOINTS.CLIM).toBe('locations');
     expect(ID_PREFIX_ENDPOINTS.GHCND).toBe('stations');
     expect(ID_PREFIX_ENDPOINTS.COOP).toBe('stations');
+    expect(ID_PREFIX_ENDPOINTS.NEXRAD).toBe('stations');
   });
 });
 

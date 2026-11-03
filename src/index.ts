@@ -39,13 +39,15 @@ await createApp({
     noaaClimateGetBillionDollarDisasters,
   ],
   resources: [noaaDatasetsResource, noaaStationResource],
+  skills: 'skills',
   prompts: [],
   instructions: `NOAA Climate Data Online (CDO) API v2 — historical weather observations and climate data.
 Primary workflow: noaa_climate_find_locations → noaa_climate_find_stations → noaa_climate_fetch_data.
 Discovery: noaa_climate_list_datasets → noaa_climate_list_data_categories → noaa_climate_list_data_types.
 Location categories: noaa_climate_list_location_categories enumerates the 12 valid locationCategoryId values.
 Date range limits: daily datasets (GHCND etc.) max 1 year per request; monthly/annual (GSOM, GSOY) max 10 years.
-Always pass units=metric or units=standard to noaa_climate_fetch_data — raw GHCND values are tenths-of-unit integers.
+Prefer units=metric or units=standard for noaa_climate_fetch_data; omitted units preserve datatype-specific raw values, with guidance in the response. GHCND TMAX/TMIN use tenths °C, PRCP tenths mm, and SNOW/SNWD whole mm. Missing PRECIP_HLY/HPCP and PRECIP_15/QPCP observations carry missing=true with value omitted; GHCND flags.quality identifies failed quality checks without discarding values.
+Station IDs are trimmed and uppercased; bare 11-character GHCN IDs gain GHCND:. Observation queries are limited to 4000 encoded characters; reduce filters and make separate calls when exceeded.
 Severe-weather events are a separate corpus: noaa_climate_search_storm_events reads the NCEI Storm Events Database (tornado, hail, flood, hurricane damage and casualties), needs no token, and requires a year selecting one export. Optional YYYY-MM-DD startDate/endDate match inclusive event-span overlap; missing or invalid source spans are excluded only when a date bound is active.
 Disaster costs are a third corpus: noaa_climate_get_billion_dollar_disasters reads NCEI's retired Billion-Dollar Weather and Climate Disasters archive (1980–2024), needs no token, and reports every cost in whole US dollars. No years after 2024 are added; CPI-adjusted costs preserve the archive's adjustment without rebasing to current prices.`,
   landing: { requireAuth: false },

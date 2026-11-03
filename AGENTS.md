@@ -2,9 +2,9 @@
 
 **Server:** noaa-climate-mcp-server
 **Version:** 0.7.1
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.15`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.18`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/server` ^2.3.1
+**MCP SDK:** `@modelcontextprotocol/server` ^2.4.0
 **Zod:** ^4.6.7
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -13,7 +13,7 @@
 
 ## Domain
 
-NOAA Climate Data Online (CDO) API v2 — historical weather data — plus two separate NCEI bulk-CSV corpora: the Storm Events Database and Billion-Dollar Weather and Climate Disasters. 10 tools, 2 resources:
+NOAA Climate Data Online (CDO) API v2 — historical weather data — plus two separate NCEI bulk-CSV corpora: the Storm Events Database and Billion-Dollar Weather and Climate Disasters. 10 tools, 2 data resources, and 1 published agent skill:
 
 - `noaa_climate_list_datasets` — list available CDO datasets
 - `noaa_climate_list_data_categories` — list measurement category groups
@@ -27,6 +27,8 @@ NOAA Climate Data Online (CDO) API v2 — historical weather data — plus two s
 - `noaa_climate_get_billion_dollar_disasters` — query NCEI’s retired 1980–2024 Billion-Dollar Weather and Climate Disasters archive, per disaster or per year. Every successful response carries a retirement notice composed with paging guidance. CPI adjustments stay as archived, without current-price rebasing or an inferred base year; `coveredYears` stays row-derived. State shape is advertised as `^\s*[A-Za-z]{2}\s*$`; well-formed unavailable codes remain `unknown_state`.
 - `noaa://datasets` resource — all CDO datasets as injectable context
 - `noaa://stations/{stationId}` resource — station metadata by ID
+
+CDO station inputs share `stationIdFilter` / `stationIdArrayFilter` and `normalizeStationId` in `shared/validation.ts`: trim, uppercase, and prefix bare 11-character GHCN aliases; generic IDs remain opaque. Successful tools compose normalization notices; the station resource keeps its existing result shape. `/data` alone checks the actual encoded query against 4000 characters before retry/fetch. Fetch-data keeps raw CDO types distinct from its output: documented PRECIP_HLY/HPCP and PRECIP_15/QPCP missing sentinels omit `value` and set `missing: true`; only GHCND attributes gain decoded `flags`. Missing/QC counts are page-local, and raw-unit guidance is datatype-qualified. All notices compose with clamp and paging guidance.
 
 **Services:**
 
@@ -193,6 +195,8 @@ src/
 
 ## Skills
 
+`skills/noaa-climate-guide/SKILL.md` is the published caller guide for climate comparisons, coverage, observation quality, and storm-to-station investigation. `src/index.ts` serves it through the MCP Skills extension and a skill resource alongside the two data resources. Plugin, npm, Docker, and MCPB delivery preserve the root `skills/` tree.
+
 Skills are modular instructions in `framework-skills/` at the project root. Read them directly when a task matches — e.g., `framework-skills/add-tool/SKILL.md` when adding a tool. `bun run list-skills` prints the full registry. The directory is deliberately not `skills/`: Claude Code and Codex auto-load a plugin's root `skills/`, so a server that ships `.claude-plugin/` or `.codex-plugin/` would hand these development skills to every agent that installs it. Keep `skills/` free for skills meant for those agents.
 
 **Agent skill directory:** Copy skills into the directory your agent discovers (Claude Code: `.claude/skills/`, others: equivalent). Skills then load as context without referencing `framework-skills/` paths. After framework updates, run the `maintenance` skill — Phase B re-syncs the agent directory.
@@ -204,6 +208,7 @@ Available skills:
 | `setup` | Post-init project orientation |
 | `design-mcp-server` | Design tool surface, resources, and services for a new server |
 | `add-tool` | Scaffold a new tool definition |
+| `add-skill` | Author and publish agent-facing skills from root `skills/`, served over MCP |
 | `add-app-tool` | Scaffold an MCP App tool + paired UI resource |
 | `add-resource` | Scaffold a new resource definition |
 | `add-prompt` | Scaffold a new prompt definition |
@@ -254,7 +259,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run audit:fix` | `bun audit fix` — upgrade vulnerable packages to the lowest safe version within existing ranges (`--dry-run` previews, `--latest` rewrites ranges). First response when `devcheck` flags a transitive advisory; then `bun update <name>`, then `bun dedupe` |
 | `bun run audit:refresh` | Delete `bun.lock` and reinstall. Last resort after `audit:fix`, `bun update <name>`, and `bun dedupe` — re-resolves every ranged dep (the framework pin included) and rewrites the lockfile as `lockfileVersion: 2` |
 | `bun run lint:mcp` | Run the MCP definition linter standalone (rule catalog: `api-linter` skill) |
-| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity (run by devcheck) |
+| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity, `.mcpbignore` coverage, plugin manifests, the published `skills/` tree (run by devcheck) |
 | `bun run list-skills` | Print the skill registry |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting (safe fixes only) |
@@ -273,7 +278,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Bundling
 
-`npm run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips two classes of `node_modules/**` content that root-anchored `.mcpbignore` patterns cannot reach: dependency-shipped agent docs (`framework-skills/`, `skills/`, `.claude/`, `.agents/`, `SKILL.md`) and platform-specific native bindings, which would otherwise lock the bundle to the platform it was packed on. A server using DataCanvas therefore ships a portable bundle without the DuckDB native — `@duckdb/node-api` is an optional peer loaded lazily, so canvas tools report an actionable install hint and every other tool works normally. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
+`npm run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. `mcpb pack` reads `.mcpbignore`, not `.gitignore`, so every root path the bundle must not ship — source, tests, docs, caches, logs, agent docs, plugin manifests, gitignored local files — needs a root-anchored line there (`/docs/`, never `docs/`, which also strips `node_modules/*/docs/`); `lint:packaging` names each missing or unanchored line. Root `skills/` ships on purpose. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips four classes of `node_modules/**` content that root-anchored `.mcpbignore` patterns cannot reach: dependency-shipped agent docs (`framework-skills/`, `skills/`, `.claude/`, `.agents/`, `SKILL.md`); platform-specific native bindings, which would otherwise lock the bundle to the platform it was packed on; node-gyp build output beside a `binding.gyp` (`config.gypi`, Makefiles, `obj.target/`, `.deps/`, object files and debug symbols), which records the packing machine's paths — compiled `*.node` addons stay; and build-only package files — the framework's `changelog/`, `scripts/`, `templates/`, `CLAUDE.md`, `AGENTS.md`, and config bases (`biome.json`, `vitest.config.base.mjs`, `config/tsconfig.base.json`), and `better-sqlite3`'s `deps/` and `src/` C sources. A server using DataCanvas therefore ships a portable bundle without the DuckDB native — `@duckdb/node-api` is an optional peer loaded lazily, so canvas tools report an actionable install hint and every other tool works normally. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
 
 **Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match, that every `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.X}"` (the host substitutes nothing else — `"${X}"` reaches the server as that literal string), and that an optional string option carries `"default": ""`.
 
@@ -340,7 +345,10 @@ import { getMyService } from '@/services/my-domain/my-service.js';
 - [ ] If wrapping external API: tests include at least one sparse payload case with omitted upstream fields
 - [ ] Registered in `createApp()` arrays (directly or via barrel exports)
 - [ ] Tests use `createMockContext()` from `@cyanheads/mcp-ts-core/testing`
+- [ ] `plugin.json` + `mcp.json` (Agent Plugins 1.0.0 — read by Codex, Cursor, GitHub Copilot, VS Code, Kiro) populated — `plugin.json` `name` = the unscoped repo name (lowercase `a-z`, `0-9`, `-`, `.` only); `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords` from `package.json`; no other top-level field, `extensions` included. `mcp.json` holds one `"type": "stdio"` entry keyed by the unscoped name, `npx -y <full package name>`, and the same fixed `env` as `.codex-plugin/mcp.json`. Neither file carries a user-supplied variable (no `""`, no `${…}` besides `${PLUGIN_ROOT}`/`${PLUGIN_DATA}`): keys reach Codex through `.codex-plugin/mcp.json` `env_vars`, which works only while `.codex-plugin/plugin.json` keeps `"mcpServers": "./.codex-plugin/mcp.json"`
 - [ ] `.codex-plugin/plugin.json` populated — `name`, `version`, `description`, `repository`, `license` from `package.json`; `interface.displayName` = the unscoped repo name (never the npm scope — `lint:packaging` enforces this); `interface.shortDescription` from `package.json` description
 - [ ] `.codex-plugin/mcp.json` updated — server name key is the unscoped repo name; every user-supplied variable (API key, contact email, instance URL) is listed in `env_vars` so Codex forwards it from the user's environment. Never write `"KEY": ""` into `env` — an empty value replaces the user's exported key and is read as unset
 - [ ] `.claude-plugin/plugin.json` populated — `name`, `version`, `description`, `author`, `repository`, `license`, `keywords` from `package.json`; inline `mcpServers` entry keyed by the unscoped repo name. Every user-supplied variable is declared under `userConfig` (`type`, `title`, `description`; `sensitive: true` for keys and tokens; `required: true` or `default: ""`) and referenced from `env` as `"KEY": "${user_config.<option>}"` — mirror the `user_config` block in `manifest.json`. Never write `"KEY": ""` into `env`
+- [ ] Any new root dev path has a root-anchored line in `.mcpbignore`; `bun run bundle` and `lint:packaging` pass
+- [ ] If the server publishes a skill in root `skills/`: `lint:packaging` passes, and `field-test` verified every gate and identifier claim in it against live tool behavior
 - [ ] `npm run devcheck` passes

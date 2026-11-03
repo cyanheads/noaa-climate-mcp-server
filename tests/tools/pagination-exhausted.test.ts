@@ -63,7 +63,12 @@ function cdoEmpty() {
   return vi.fn(async () => ({}));
 }
 
-const DATE_ARGS = { datasetId: 'GHCND', startDate: '2024-07-01', endDate: '2024-07-07' };
+const DATE_ARGS = {
+  datasetId: 'GHCND',
+  startDate: '2024-07-01',
+  endDate: '2024-07-07',
+  units: 'metric',
+};
 
 const TOOLS = [
   {

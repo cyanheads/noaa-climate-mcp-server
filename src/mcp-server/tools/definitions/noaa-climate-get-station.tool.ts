@@ -7,7 +7,11 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { isUpstreamTokenRejection } from '@/mcp-server/tools/definitions/shared/upstream-auth.js';
 import { upstreamOutageReason } from '@/mcp-server/tools/definitions/shared/upstream-availability.js';
-import { identifierFilter } from '@/mcp-server/tools/definitions/shared/validation.js';
+import {
+  normalizeStationId,
+  stationIdFilter,
+  stationNormalizationNotice,
+} from '@/mcp-server/tools/definitions/shared/validation.js';
 import { getCdoService } from '@/services/cdo/cdo-service.js';
 
 export const noaaClimateGetStation = tool('noaa_climate_get_station', {
@@ -16,7 +20,7 @@ export const noaaClimateGetStation = tool('noaa_climate_get_station', {
     'Fetch full metadata for a single weather station by its ID (e.g., "GHCND:USW00024233", "COOP:010008"). Returns name, coordinates, elevation, and the full date range for which data is available. Use when you have a station ID from noaa_climate_find_stations and want its complete details, or to verify a station before querying data.',
   annotations: { readOnlyHint: true, openWorldHint: false },
   input: z.object({
-    stationId: identifierFilter(
+    stationId: stationIdFilter(
       'Station ID to fetch (e.g., "GHCND:USW00024233", "COOP:010008"). Obtain from noaa_climate_find_stations.',
     ),
   }),
@@ -57,6 +61,13 @@ export const noaaClimateGetStation = tool('noaa_climate_get_station', {
       .describe('Fractional data coverage (0–1). Omitted when not provided by the API.'),
   }),
 
+  enrichment: {
+    notice: z
+      .string()
+      .optional()
+      .describe('Discloses station ID normalization when an alias was supplied.'),
+  },
+
   errors: [
     {
       reason: 'not_found',
@@ -90,12 +101,13 @@ export const noaaClimateGetStation = tool('noaa_climate_get_station', {
   ],
 
   async handler(input, ctx) {
+    const stationId = normalizeStationId(input.stationId);
     ctx.log.info('Getting station', { stationId: input.stationId });
 
     const service = getCdoService();
     let st: Awaited<ReturnType<typeof service.getStation>>;
     try {
-      st = await service.getStation(input.stationId, ctx);
+      st = await service.getStation(stationId, ctx);
     } catch (err) {
       // The rejected token is the only HTTP 400 this route raises that the
       // caller can act on, and the move is a deployment fix rather than a
@@ -116,6 +128,8 @@ export const noaaClimateGetStation = tool('noaa_climate_get_station', {
     }
 
     if (!st.id) throw ctx.fail('not_found', `Station "${input.stationId}" not found.`);
+    const notice = stationNormalizationNotice([input.stationId]);
+    if (notice) ctx.enrich.notice(notice);
 
     return {
       id: st.id,

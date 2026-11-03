@@ -11,7 +11,10 @@ import {
   applyPageLimit,
   identifierFilter,
   isoDateFilter,
+  normalizeStationId,
   pageLimitSchema,
+  stationIdFilter,
+  stationNormalizationNotice,
   toCdoWireDate,
   toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
@@ -30,7 +33,7 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
     locationId: identifierFilter(
       'Filter to categories available at this location ID. Optional.',
     ).optional(),
-    stationId: identifierFilter(
+    stationId: stationIdFilter(
       'Filter to categories available at this station ID. Optional.',
     ).optional(),
     startDate: isoDateFilter(
@@ -97,7 +100,7 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
       .string()
       .optional()
       .describe(
-        'Page-limit adjustment and empty or exhausted-page guidance. Omitted when no guidance applies.',
+        'Station ID normalization, page-limit adjustment, and empty or exhausted-page guidance. Omitted when no guidance applies.',
       ),
   },
 
@@ -157,6 +160,12 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
     );
     const notices: string[] = [];
     if (clampNotice) notices.push(clampNotice);
+    const stationId =
+      input.stationId === undefined ? undefined : normalizeStationId(input.stationId);
+    const stationNotice = stationNormalizationNotice(
+      input.stationId === undefined ? [] : [input.stationId],
+    );
+    if (stationNotice) notices.push(stationNotice);
     ctx.log.info('Listing data categories', {
       datasetId: input.datasetId,
       locationId: input.locationId,
@@ -166,7 +175,7 @@ export const noaaClimateListDataCategories = tool('noaa_climate_list_data_catego
     const params = {
       datasetid: input.datasetId,
       locationid: input.locationId,
-      stationid: input.stationId,
+      stationid: stationId,
       startdate: toCdoWireDate(input.startDate),
       enddate: toCdoWireDate(input.endDate),
       sortfield: input.sortField,

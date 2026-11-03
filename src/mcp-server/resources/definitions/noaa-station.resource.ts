@@ -5,7 +5,10 @@
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { identifierFilter } from '@/mcp-server/tools/definitions/shared/validation.js';
+import {
+  normalizeStationId,
+  stationIdFilter,
+} from '@/mcp-server/tools/definitions/shared/validation.js';
 import { getCdoService } from '@/services/cdo/cdo-service.js';
 
 export const noaaStationResource = resource('noaa://stations/{stationId}', {
@@ -13,7 +16,7 @@ export const noaaStationResource = resource('noaa://stations/{stationId}', {
   description:
     'Station metadata by ID — name, coordinates, elevation, and the full date range for which data is available. Mirrors noaa_climate_get_station as an injectable resource. URI format: noaa://stations/GHCND:USW00024233.',
   params: z.object({
-    stationId: identifierFilter('Station ID (e.g., GHCND:USW00024233, COOP:010008).'),
+    stationId: stationIdFilter('Station ID (e.g., GHCND:USW00024233, COOP:010008).'),
   }),
 
   errors: [
@@ -29,7 +32,7 @@ export const noaaStationResource = resource('noaa://stations/{stationId}', {
   async handler(params, ctx) {
     ctx.log.debug('Fetching station resource', { stationId: params.stationId });
     const service = getCdoService();
-    const station = await service.getStation(params.stationId, ctx);
+    const station = await service.getStation(normalizeStationId(params.stationId), ctx);
     if (!station.id) {
       throw ctx.fail('not_found', `Station "${params.stationId}" not found.`, {
         stationId: params.stationId,

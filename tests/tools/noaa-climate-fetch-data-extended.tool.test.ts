@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateFetchData } from '@/mcp-server/tools/definitions/noaa-climate-fetch-data.tool.js';
 
@@ -27,6 +27,77 @@ beforeEach(() => {
 });
 
 describe('noaaClimateFetchData — input validation', () => {
+  it.each([
+    ['PRECIP_HLY', 'HPCP', 'metric', 99999, '{,'],
+    ['PRECIP_HLY', 'HPCP', 'standard', 25399.75, '{,'],
+    ['PRECIP_15', 'QPCP', undefined, 999.99, '{,'],
+    ['PRECIP_HLY', 'OTHER', undefined, 99999, '{,'],
+    ['GHCND', 'HPCP', undefined, 99999, '{,'],
+    ['PRECIP_15', 'QPCP', 'metric', 0, 'T,'],
+    ['PRECIP_HLY', 'HPCP', undefined, 45, '],'],
+    ['PRECIP_HLY', 'HPCP', undefined, 12, 'A,'],
+    ['NORMAL_HLY', 'HLY-TEMP-NORMAL', undefined, 585, ',L,N,0800'],
+    ['GSOM', 'TAVG', 'metric', 5.33, ',L,N,0800'],
+  ] as const)(
+    'preserves %s/%s %s value %s with attributes %s',
+    async (datasetId, datatype, units, value, attributes) => {
+      vi.mocked(vi.mocked(getCdoService)().fetchData).mockResolvedValueOnce({
+        results: [{ date: '2010-01-01', datatype, station: 'COOP:454769', value, attributes }],
+        metadata: { resultset: { count: 1, limit: 1, offset: 1 } },
+      });
+      const result = await runToolContract(noaaClimateFetchData, {
+        datasetId,
+        units,
+        startDate: '2010-01-01',
+        endDate: '2010-01-01',
+        limit: 1,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({ results: [{ value, attributes }] });
+      const data = result.structuredContent as {
+        results: Record<string, unknown>[];
+        notice?: string;
+      };
+      expect(data.results[0]).not.toHaveProperty('missing');
+      if (datasetId !== 'GHCND') expect(data.results[0]).not.toHaveProperty('flags');
+      if (units !== undefined) expect(data.notice).toBeUndefined();
+      expect(JSON.stringify(result.content)).toContain(String(value));
+      expect(JSON.stringify(result.content)).toContain(attributes);
+      expect(getCdoService().fetchData).toHaveBeenCalledWith(
+        expect.objectContaining({ units }),
+        expect.anything(),
+      );
+    },
+  );
+
+  it.each([
+    ['', { measurement: '' }],
+    [',', { measurement: '', quality: '' }],
+    ['T,,Z', { measurement: 'T', quality: '', source: 'Z' }],
+    [', ,N,0000', { measurement: '', quality: ' ', source: 'N', observationTime: '0000' }],
+    [',?,Z,0030', { measurement: '', quality: '?', source: 'Z', observationTime: '0030' }],
+  ] as const)('preserves GHCND flag slots in %j', async (attributes, expectedFlags) => {
+    vi.mocked(vi.mocked(getCdoService)().fetchData).mockResolvedValueOnce({
+      results: [{ date: '2024-01-01', datatype: 'PRCP', station: 'GHCND:X', value: 0, attributes }],
+      metadata: { resultset: { count: 1, limit: 25, offset: 1 } },
+    });
+    const result = await runToolContract(noaaClimateFetchData, {
+      datasetId: 'ghcnd',
+      units: 'metric',
+      startDate: '20240101',
+      endDate: '20240101',
+    });
+    const data = result.structuredContent as {
+      results: { attributes: string; flags: Record<string, string> }[];
+      notice?: string;
+    };
+    expect(data.results[0]?.attributes).toBe(attributes);
+    expect(data.results[0]!.flags).toEqual(expectedFlags);
+    if (attributes === ',?,Z,0030') {
+      expect(data.notice).toContain('1 observation');
+      expect(JSON.stringify(result.content)).toContain('0030');
+    } else expect(data.notice).toBeUndefined();
+  });
   it('rejects an empty datasetId string', () => {
     expect(() =>
       noaaClimateFetchData.input.parse({
@@ -364,27 +435,22 @@ describe('noaaClimateFetchData — error propagation', () => {
 });
 
 describe('noaaClimateFetchData — security', () => {
-  it('treats stationId values as opaque strings — no interpretation', async () => {
+  it('rejects an unnamespaced ambiguous stationId before service access', async () => {
     const mockService = {
       fetchData: vi.fn().mockResolvedValue(defaultMockResponse),
     } as unknown as ReturnType<typeof getCdoService>;
     vi.mocked(getCdoService).mockReturnValue(mockService);
 
-    const ctx = createMockContext({ errors: noaaClimateFetchData.errors });
     const injectionAttempt = "'; DROP TABLE stations; --";
-    const input = noaaClimateFetchData.input.parse({
-      datasetId: 'GHCND',
-      startDate: '2023-01-01',
-      endDate: '2023-01-31',
-      stationId: [injectionAttempt],
-    });
-    await noaaClimateFetchData.handler(input, ctx);
-
-    // The value is forwarded verbatim to the service (which handles HTTP encoding)
-    expect(mockService.fetchData).toHaveBeenCalledWith(
-      expect.objectContaining({ stationid: [injectionAttempt] }),
-      ctx,
-    );
+    expect(() =>
+      noaaClimateFetchData.input.parse({
+        datasetId: 'GHCND',
+        startDate: '2023-01-01',
+        endDate: '2023-01-31',
+        stationId: [injectionAttempt],
+      }),
+    ).toThrow();
+    expect(mockService.fetchData).not.toHaveBeenCalled();
   });
 
   it('output and error messages do not expose NOAA_CDO_TOKEN or any env secret', async () => {

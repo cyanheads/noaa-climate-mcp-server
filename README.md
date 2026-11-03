@@ -1,13 +1,13 @@
 <div align="center">
   <h1>@cyanheads/noaa-climate-mcp-server</h1>
   <p><b>Search NOAA climate stations and datasets, fetch historical weather observations via MCP. STDIO or Streamable HTTP.</b>
-  <div>10 Tools • 2 Resources</div>
+  <div>10 Tools • 2 Data Resources • 1 Skill</div>
   </p>
 </div>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.7.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.7.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/noaa-climate-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.4.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/noaa-climate-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/noaa-climate-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -53,7 +53,13 @@ Historical weather and climate records from NOAA: station observations from Clim
 | `noaa://datasets` | All CDO datasets with IDs and temporal coverage — injectable context for orienting an agent before querying data |
 | `noaa://stations/{stationId}` | Station metadata by ID — name, coordinates, elevation, and data coverage date range |
 
+### Agent skill
+
+[noaa-climate-guide](skills/noaa-climate-guide/SKILL.md) covers historical comparisons, coverage checks, observation quality, and storm-to-station investigation. It ships with plugin, npm, Docker, and MCPB installs and is served through the MCP Skills extension and a skill resource alongside the two data resources.
+
 ## Capability reference
+
+Every `stationId` input, including the station resource, trims surrounding whitespace and uppercases IDs. Bare 11-character GHCN IDs (`USW00024233`) become `GHCND:USW00024233`. Namespaced IDs such as `COOP:454769`, `NEXRAD:KATX`, and unfamiliar nonempty namespace/payload pairs remain accepted; ambiguous bare IDs are rejected. Tools disclose changes in a notice; the resource returns the canonical station ID. Syntax does not establish that a station exists.
 
 ### `noaa_climate_list_datasets` <sub>tool</sub>
 
@@ -110,8 +116,10 @@ Historical weather and climate records from NOAA: station observations from Clim
 ### `noaa_climate_fetch_data` <sub>tool</sub>
 
 - Requires `datasetId`, `startDate`, `endDate`; optional `stationId`, `locationId`, `datatypeId` arrays. The span cap is 1 year for GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3 and 10 years for GSOM, GSOY, NORMAL_MLY, NORMAL_ANN; any `NORMAL_*` dataset takes `startDate=2010-01-01` / `endDate=2010-12-31`
-- Returns flat `{ date, datatype, station, value, attributes }` records plus an `effectiveQuery` echo; `date_range_exceeded` names the latest `maxEndDate` CDO will accept
-- `units: "metric"` or `"standard"` is strongly recommended — without it, GHCND values are raw tenths-of-unit integers (e.g. `TMAX=256` is 25.6°C)
+- Returns flat observation records plus an `effectiveQuery` echo; `date_range_exceeded` names the latest `maxEndDate` CDO will accept. The encoded query ceiling is 4000 characters; longer queries fail as `validation_error` before any request. Reduce `stationId`, `locationId`, and `datatypeId` filters and make separate calls. Filters are never discarded or automatically split.
+- Request `units: "metric"` or `"standard"`. Omission preserves NOAA's raw values and adds dataset-specific guidance, including on empty pages. Examples: GHCND `TMAX`/`TMIN` use tenths °C, `PRCP` tenths mm, and `SNOW`/`SNWD` whole mm; GSOM/GSOY temperature and precipitation use °C/mm; NORMAL_* temperature normals use tenths °F and precipitation normals hundredths inches; PRECIP_HLY `HPCP` and PRECIP_15 `QPCP` use hundredths inches. Units and scale depend on datatype; these examples do not describe wind, direction, counts, percentages, or every snow datatype. See [NOAA's dataset documentation](https://www.ncei.noaa.gov/pub/data/cdo/documentation/).
+- PRECIP_HLY `HPCP` and PRECIP_15 `QPCP` missing sentinels become `missing: true` with `value` omitted: `99999` without units, `999.99` standard, or `25399.75` metric. Rows, raw `attributes`, order, totals, and offsets remain intact. Zero, trace, and accumulation-end measurements remain values; flags alone do not mark a row missing. A notice counts missing observations on this page.
+- GHCND `attributes` remain raw and are also decoded as `flags: { measurement, quality, source, observationTime }`. Explicit blank slots and leading-zero times are preserved; absent trailing positions remain omitted. A nonblank `quality` means the observation failed a quality check. A notice counts those rows on this page; numeric values remain available for callers to decide how to aggregate them. Other datasets retain their raw attributes without GHCND decoding. See [GHCND's flag layout](https://www.ncei.noaa.gov/pub/data/cdo/documentation/GHCND_documentation.pdf).
 
 ---
 
@@ -155,7 +163,7 @@ NOAA-specific:
 - Full CDO API v2 coverage — datasets, data categories, data types, locations, stations, and observations — plus two separate NCEI bulk-CSV corpora requiring no token: severe-weather events (Storm Events Database) and billion-dollar disaster costs
 - Client-side date-range validation enforced per dataset before hitting the API, reporting the exact upstream limit back to the caller
 - Discovery date intervals reject `startDate > endDate` before any request, with `validation_error` and a hint to swap the values. Equal and single-ended dates remain valid; compact `YYYYMMDD`, unpadded dashed dates, and supported second-precision datetime forms are normalized for comparison.
-- Unit normalization via CDO's `units` parameter avoids raw tenths-of-unit integer confusion
+- Unit conversion via CDO's `units` parameter, with datatype-qualified guidance when raw values are requested
 - CDO's own rejection message is recovered and surfaced — an over-long date range, malformed date, or missing parameter reports the reason CDO gave instead of a bare status line
 - Billion-Dollar Disasters costs are converted to whole US dollars from whichever unit each NCEI export declares in its own preamble, since the unit differs by export
 
@@ -169,113 +177,33 @@ Agent-friendly output:
 
 ## Getting started
 
-### Public Hosted Instance
+Connect to the hosted instance, no install:
 
-A public instance is available at `https://noaa-climate.caseyjhand.com/mcp` — no installation required. Point any MCP client at it via Streamable HTTP:
-
-```json
-{
-  "mcpServers": {
-    "noaa-climate-mcp-server": {
-      "type": "streamable-http",
-      "url": "https://noaa-climate.caseyjhand.com/mcp"
-    }
-  }
-}
+```sh
+claude mcp add --transport http noaa-climate-mcp-server https://noaa-climate.caseyjhand.com/mcp
 ```
 
-### Self-Hosted / Local
+Or run it locally:
 
-Add the following to your MCP client configuration file.
-
-```json
-{
-  "mcpServers": {
-    "noaa-climate-mcp-server": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@cyanheads/noaa-climate-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
-        "NOAA_CDO_TOKEN": "your-token-here"
-      }
-    }
-  }
-}
+```sh
+claude mcp add noaa-climate-mcp-server -e NOAA_CDO_TOKEN=your-token-here -- npx -y @cyanheads/noaa-climate-mcp-server
 ```
 
-Or with npx (no Bun required):
+For other clients, add this to the MCP config file:
 
 ```json
 {
   "mcpServers": {
     "noaa-climate-mcp-server": {
-      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@cyanheads/noaa-climate-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
-        "NOAA_CDO_TOKEN": "your-token-here"
-      }
+      "args": ["-y", "@cyanheads/noaa-climate-mcp-server"],
+      "env": { "NOAA_CDO_TOKEN": "your-token-here" }
     }
   }
 }
 ```
 
-Or with Docker:
-
-```json
-{
-  "mcpServers": {
-    "noaa-climate-mcp-server": {
-      "type": "stdio",
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "-e", "MCP_TRANSPORT_TYPE=stdio", "-e", "NOAA_CDO_TOKEN=your-token-here", "ghcr.io/cyanheads/noaa-climate-mcp-server:latest"]
-    }
-  }
-}
-```
-
-For Streamable HTTP, set the transport and start the server:
-
-```sh
-MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 NOAA_CDO_TOKEN=your-token-here bun run start:http
-# Server listens at http://localhost:3010/mcp
-```
-
-### Prerequisites
-
-- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js ≥24.0.0).
-- A free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) — required for CDO requests; Storm Events and Billion-Dollar Disasters need no token.
-
-### Installation
-
-1. **Clone the repository:**
-
-```sh
-git clone https://github.com/cyanheads/noaa-climate-mcp-server.git
-```
-
-2. **Navigate into the directory:**
-
-```sh
-cd noaa-climate-mcp-server
-```
-
-3. **Install dependencies:**
-
-```sh
-bun install
-```
-
-4. **Configure environment:**
-
-```sh
-cp .env.example .env
-# edit .env and set required vars
-```
+Get a free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) for CDO requests; Storm Events and Billion-Dollar Disasters need no token. For Docker or a source build, see [Running the server](#running-the-server).
 
 ## Configuration
 
@@ -301,6 +229,21 @@ Server-specific configuration uses Zod schemas in `src/config/server-config.ts`.
 See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ## Running the server
+
+### Prerequisites
+
+- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js ≥24.0.0).
+- A free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) for CDO requests; the two bulk corpora need no token.
+
+### Source installation
+
+```sh
+git clone https://github.com/cyanheads/noaa-climate-mcp-server.git
+cd noaa-climate-mcp-server
+bun install
+cp .env.example .env
+# Set NOAA_CDO_TOKEN in .env for CDO requests.
+```
 
 ### Local development
 
@@ -344,6 +287,7 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 | `src/services/billion-dollar-disasters` | NCEI Billion-Dollar Disasters client — declared-unit resolution and conversion to whole US dollars. |
 | `src/config` | Server-specific environment variable parsing and validation with Zod. |
 | `tests/` | Unit and integration tests, mirroring the `src/` structure. |
+| `skills/` | Published agent guide, discovered by plugin hosts and served over MCP. |
 
 ## Development guide
 

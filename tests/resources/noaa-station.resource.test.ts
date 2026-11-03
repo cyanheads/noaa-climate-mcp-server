@@ -35,6 +35,13 @@ beforeEach(() => {
 });
 
 describe('noaaStationResource', () => {
+  it('normalizes a bare lowercase alias before station lookup', async () => {
+    const ctx = createMockContext({ errors: noaaStationResource.errors });
+    const params = noaaStationResource.params!.parse({ stationId: ' usc00450974 ' });
+    const result = await noaaStationResource.handler(params, ctx);
+    expect(vi.mocked(getCdoService)().getStation).toHaveBeenCalledWith('GHCND:USC00450974', ctx);
+    expect(result).toMatchObject({ id: 'GHCND:USC00450974' });
+  });
   it('returns full station metadata for a known station', async () => {
     const ctx = createMockContext({ errors: noaaStationResource.errors });
     const result = await noaaStationResource.handler({ stationId: 'GHCND:USC00450974' }, ctx);

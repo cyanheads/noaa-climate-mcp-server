@@ -206,6 +206,43 @@ export function identifierFilter(description: string) {
   return nonBlank(BLANK_MESSAGE).describe(description);
 }
 
+const STATION_ID_PATTERN = /^\s*(?:[A-Za-z]{2}[A-Za-z0-9]{9}|[^:\s]+:[^\s]+)\s*$/;
+const STATION_ID_MESSAGE =
+  'Use a namespaced station ID such as GHCND:USW00024233, COOP:454769, or NEXRAD:KATX, or a bare 11-character GHCN ID such as USW00024233.';
+
+/** Station syntax includes case and surrounding-whitespace aliases; existence is checked upstream. */
+export function stationIdFilter(description: string) {
+  return z
+    .string()
+    .min(1, { error: STATION_ID_MESSAGE, abort: true })
+    .regex(STATION_ID_PATTERN, STATION_ID_MESSAGE)
+    .describe(
+      `${description} Trims surrounding whitespace, uppercases IDs, and accepts bare 11-character GHCN aliases (USW00024233 → GHCND:USW00024233). Other namespaced IDs remain accepted.`,
+    );
+}
+
+/** A nonempty repeated station filter, using the same syntax as station-detail lookups. */
+export function stationIdArrayFilter(description: string) {
+  return z
+    .array(stationIdFilter('Station ID.'))
+    .min(1, 'Provide at least one station identifier, or omit the filter entirely.')
+    .describe(description);
+}
+
+/** Canonicalize a schema-validated station ID without restricting namespace membership. */
+export function normalizeStationId(value: string): string {
+  const canonical = value.trim().toUpperCase();
+  return canonical.includes(':') ? canonical : `GHCND:${canonical}`;
+}
+
+/** Disclose changed station inputs without altering the raw enrichment text. */
+export function stationNormalizationNotice(values: readonly string[]): string | undefined {
+  const changed = values.filter((value) => value !== normalizeStationId(value));
+  return changed.length
+    ? `Normalized station IDs: ${changed.map((value) => `${JSON.stringify(value)} → ${normalizeStationId(value)}`).join(', ')}.`
+    : undefined;
+}
+
 /**
  * A repeated CDO identifier filter. An empty array and blank entries are both
  * rejected: the service layer drops falsy entries when building the query

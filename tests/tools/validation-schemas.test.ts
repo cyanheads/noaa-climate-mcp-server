@@ -168,6 +168,88 @@ describe('noaa_climate_fetch_data — date filter validation', () => {
 });
 
 describe('scalar identifier filters reject empty and whitespace-only values', () => {
+  it.each([
+    [noaaClimateListDatasets, 'listDatasets'],
+    [noaaClimateListDataCategories, 'listDataCategories'],
+    [noaaClimateListDataTypes, 'listDataTypes'],
+  ] as const)('canonicalizes station aliases through $1', async (def, method) => {
+    const result = await runToolContract(def, { stationId: ' usw00024233 ', limit: 1001 });
+    expect(result.isError).not.toBe(true);
+    expect(vi.mocked(getCdoService)()[method]).toHaveBeenCalledWith(
+      expect.objectContaining({ stationid: 'GHCND:USW00024233' }),
+      expect.anything(),
+    );
+    expect(result.structuredContent).toMatchObject({
+      notice: expect.stringContaining('GHCND:USW00024233'),
+    });
+    expect(JSON.stringify(result.content)).toContain('GHCND:USW00024233');
+    expect(JSON.stringify(result.content)).toContain('clamped');
+    const canonical = await runToolContract(def, { stationId: 'GHCND:USW00024233' });
+    expect(JSON.stringify(canonical.structuredContent)).not.toContain('Normalized');
+  });
+
+  it('canonicalizes all fetch-data station aliases and effective query', async () => {
+    const result = await runToolContract(noaaClimateFetchData, {
+      datasetId: 'GHCND',
+      startDate: '20240101',
+      endDate: '20240101',
+      stationId: ['usw00024233', ' coop:454769 ', 'nexrad:katx', 'rare:abc'],
+    });
+    expect(vi.mocked(getCdoService)().fetchData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stationid: ['GHCND:USW00024233', 'COOP:454769', 'NEXRAD:KATX', 'RARE:ABC'],
+      }),
+      expect.anything(),
+    );
+    expect(result.structuredContent).toMatchObject({
+      effectiveQuery: expect.stringContaining('GHCND:USW00024233'),
+      notice: expect.stringContaining('Normalized'),
+    });
+    expect(JSON.stringify(result.content)).toContain('Normalized');
+    const canonical = await runToolContract(noaaClimateFetchData, {
+      datasetId: 'GHCND',
+      startDate: '20240101',
+      endDate: '20240101',
+      stationId: ['GHCND:USW00024233'],
+      units: 'metric',
+    });
+    expect(JSON.stringify(canonical.structuredContent)).not.toContain('Normalized');
+  });
+
+  it('normalizes station-detail aliases and discloses them on both surfaces', async () => {
+    const getStation = vi.fn().mockResolvedValue({ id: 'GHCND:USW00024233', name: 'Seattle' });
+    vi.mocked(getCdoService).mockReturnValue({ getStation } as unknown as ReturnType<
+      typeof getCdoService
+    >);
+    const result = await runToolContract(noaaClimateGetStation, { stationId: ' usw00024233 ' });
+    expect(getStation).toHaveBeenCalledWith('GHCND:USW00024233', expect.anything());
+    expect(result.structuredContent).toMatchObject({
+      id: 'GHCND:USW00024233',
+      notice: expect.stringContaining('Normalized'),
+    });
+    expect(JSON.stringify(result.content)).toContain('Normalized');
+    const canonical = await runToolContract(noaaClimateGetStation, {
+      stationId: 'GHCND:USW00024233',
+    });
+    expect(canonical.structuredContent).not.toHaveProperty('notice');
+  });
+
+  it('advertises actionable invalid station syntax on both surfaces without service access', async () => {
+    vi.mocked(getCdoService).mockClear();
+    const result = await runToolContract(noaaClimateFetchData, {
+      datasetId: 'GHCND',
+      startDate: '20240101',
+      endDate: '20240101',
+      stationId: ['GHCND:USW00024233', 'KATX'],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: { code: -32602 } });
+    for (const example of ['GHCND:USW00024233', 'COOP:454769', 'NEXRAD:KATX']) {
+      expect(JSON.stringify(result.structuredContent)).toContain(example);
+      expect(JSON.stringify(result.content)).toContain(example);
+    }
+    expect(getCdoService).not.toHaveBeenCalled();
+  });
   const cases = [
     ['noaa_climate_list_data_categories.datasetId', noaaClimateListDataCategories, 'datasetId'],
     ['noaa_climate_list_data_categories.locationId', noaaClimateListDataCategories, 'locationId'],
@@ -241,11 +323,12 @@ describe('array identifier filters reject empty arrays and blank entries', () =>
   });
 
   it.each(cases)('%s accepts real identifiers unmodified', (_label, def, field) => {
+    const values = field === 'stationId' ? ['GHCND:USW00024233', 'COOP:454769'] : ['TMAX', 'TMIN'];
     const parsed = def.input.parse({
       ...requiredInput(def),
-      [field]: ['TMAX', 'TMIN'],
+      [field]: values,
     }) as Record<string, unknown>;
-    expect(parsed[field]).toEqual(['TMAX', 'TMIN']);
+    expect(parsed[field]).toEqual(values);
   });
 });
 

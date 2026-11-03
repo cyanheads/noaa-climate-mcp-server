@@ -1,6 +1,6 @@
 # noaa-climate-mcp-server - Directory Structure
 
-Generated on: 2026-10-23 05:16:33
+Generated on: 2026-11-03 07:39:40
 
 ```text
 noaa-climate-mcp-server/
@@ -43,6 +43,8 @@ noaa-climate-mcp-server/
 │   ├── add-resource/
 │   │   └── SKILL.md
 │   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-skill/
 │   │   └── SKILL.md
 │   ├── add-test/
 │   │   └── SKILL.md
@@ -140,6 +142,9 @@ noaa-climate-mcp-server/
 │   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   └── tree.ts
+├── skills/
+│   └── noaa-climate-guide/
+│       └── SKILL.md
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -198,6 +203,8 @@ noaa-climate-mcp-server/
 │   ├── resources/
 │   │   ├── noaa-datasets.resource.test.ts
 │   │   └── noaa-station.resource.test.ts
+│   ├── scripts/
+│   │   └── packaging-agent-docs.test.ts
 │   ├── services/
 │   │   ├── billion-dollar-disasters-service.test.ts
 │   │   ├── cdo-error-explanation.test.ts
@@ -255,7 +262,9 @@ noaa-climate-mcp-server/
 ├── Dockerfile
 ├── LICENSE
 ├── manifest.json
+├── mcp.json
 ├── package.json
+├── plugin.json
 ├── README.md
 ├── server.json
 ├── tsconfig.build.json

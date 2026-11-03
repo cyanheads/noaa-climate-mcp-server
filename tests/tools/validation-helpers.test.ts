@@ -12,6 +12,10 @@ import {
   identifierArrayFilter,
   identifierFilter,
   isoDateFilter,
+  normalizeStationId,
+  stationIdArrayFilter,
+  stationIdFilter,
+  stationNormalizationNotice,
   toCdoWireDate,
   toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
@@ -21,6 +25,76 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
   createCounter: vi.fn(() => metric),
 }));
+
+describe('station identifiers', () => {
+  const schema = stationIdFilter('Station.');
+  it.each([
+    ['USW00024233', 'GHCND:USW00024233'],
+    [' usw00024233 ', 'GHCND:USW00024233'],
+    ['ghcnd:usw00024233', 'GHCND:USW00024233'],
+    [' \tGHCND:USW00024233\r\n', 'GHCND:USW00024233'],
+    ['coop:454769', 'COOP:454769'],
+    ['nexrad:katx', 'NEXRAD:KATX'],
+    ['unfamiliar:abc-123', 'UNFAMILIAR:ABC-123'],
+    ['unfamiliar:abc:123', 'UNFAMILIAR:ABC:123'],
+  ])('accepts and canonicalizes %j as %s', (input, canonical) => {
+    expect(schema.parse(input)).toBe(input);
+    expect(normalizeStationId(input)).toBe(canonical);
+    const json = z.toJSONSchema(schema, { io: 'input' });
+    expect(new RegExp(json.pattern!).test(input)).toBe(true);
+  });
+  it.each([
+    '',
+    ' ',
+    'KATX',
+    '454769',
+    'USW0002423',
+    '12345678901',
+    ':ABC',
+    'COOP:',
+    ' : ',
+    'N:A B',
+  ])('rejects ambiguous or malformed %j', (input) => {
+    expect(schema.safeParse(input).success).toBe(false);
+    expect(stationIdArrayFilter('Stations.').safeParse(['GHCND:USW00024233', input]).success).toBe(
+      false,
+    );
+  });
+  it('keeps canonical inputs silent and names changed inputs without altering other filters', () => {
+    expect(stationNormalizationNotice(['GHCND:USW00024233', 'COOP:454769'])).toBeUndefined();
+    expect(stationNormalizationNotice(['usw00024233'])).toBe(
+      'Normalized station IDs: "usw00024233" → GHCND:USW00024233.',
+    );
+    expect(identifierFilter('Location.').parse(' lower:place ')).toBe(' lower:place ');
+    expect(stationIdArrayFilter('Stations.').safeParse([]).success).toBe(false);
+  });
+
+  it.each([
+    ['digits', (n: number) => '1'.repeat(n), 320_000],
+    ['openers', (n: number) => '<a'.repeat(n / 2), 80_000],
+    ['nested', (n: number) => '<a'.repeat(n / 4) + '>'.repeat(n / 2), 80_000],
+    ['trailing break', (n: number) => `${'X'.repeat(n)}\ny`, 80_000],
+    ['embedded breaks', (n: number) => '  \r\n'.repeat(n / 4), 80_000],
+  ] as const)('station syntax timing stays bounded for %s', (_label, shape, maximum) => {
+    const measure = (length: number) => {
+      const input = shape(length);
+      let least = Number.POSITIVE_INFINITY;
+      for (let sample = 0; sample < 3; sample++) {
+        const before = process.threadCpuUsage();
+        for (let iteration = 0; iteration < 20; iteration++) schema.safeParse(input);
+        const cpu = process.threadCpuUsage(before);
+        least = Math.min(least, (cpu.user + cpu.system) / 20);
+      }
+      return least;
+    };
+    const baseline = measure(5000);
+    for (let length = 10_000; length <= maximum; length *= 2) {
+      const cpuMicros = measure(length);
+      expect(cpuMicros).toBeLessThan(100_000);
+      expect(cpuMicros / baseline).toBeLessThan(256);
+    }
+  });
+});
 
 describe('applyPageLimit', () => {
   it.each([

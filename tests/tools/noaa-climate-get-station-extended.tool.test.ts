@@ -131,7 +131,7 @@ describe('noaaClimateGetStation — output shape', () => {
 });
 
 describe('noaaClimateGetStation — security', () => {
-  it('injection attempt in stationId is forwarded as-is to the service', async () => {
+  it('normalizes a namespaced stationId without interpreting its payload', async () => {
     const mockService = {
       getStation: vi.fn().mockResolvedValue({}),
     } as unknown as ReturnType<typeof getCdoService>;
@@ -145,6 +145,6 @@ describe('noaaClimateGetStation — security', () => {
     await expect(noaaClimateGetStation.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'not_found' },
     });
-    expect(mockService.getStation).toHaveBeenCalledWith(injection, ctx);
+    expect(mockService.getStation).toHaveBeenCalledWith('GHCND:X/../../../ETC/PASSWD', ctx);
   });
 });

@@ -169,7 +169,7 @@ describe('CdoService — upstream failure explanation', () => {
     );
 
     const error = await captureFailure((service) =>
-      service.fetchData(
+      service.listDataTypes(
         {
           datasetid: 'GHCND',
           startdate: '2023-01-01',

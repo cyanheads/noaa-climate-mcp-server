@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
 import { explainUpstreamFailure } from '@/services/upstream-failure.js';
@@ -169,6 +169,18 @@ export class CdoService {
     ctx: Context,
     expectedStatuses?: number[],
   ): Promise<T> {
+    const qs = buildParams(params).toString();
+    if (path === 'data' && qs.length > 4000) {
+      throw new McpError(
+        JsonRpcErrorCode.InvalidParams,
+        'NOAA CDO observation queries must be at most 4000 encoded query characters.',
+        {
+          recovery: {
+            hint: 'Reduce stationId, locationId, and datatypeId filters and make separate calls; no filters have been processed.',
+          },
+        },
+      );
+    }
     const { token } = getServerConfig();
     const retryCtx = requestContextService.createRequestContext({
       operation: `cdo.${path}`,
@@ -177,7 +189,6 @@ export class CdoService {
 
     return withRetry(
       async () => {
-        const qs = buildParams(params).toString();
         const url = `${this.baseUrl}/${path}${qs ? `?${qs}` : ''}`;
         ctx.log.debug('CDO API request', { url });
 
