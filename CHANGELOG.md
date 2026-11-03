@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.8.0](changelog/0.8.x/0.8.0.md) — 2026-11-03 · ⚠️ Breaking
+
+Climate observation quality and station IDs
+
 ## [0.7.1](changelog/0.7.x/0.7.1.md) — 2026-10-22
 
 Climate queries honor date filters and preserve paging guidance.
