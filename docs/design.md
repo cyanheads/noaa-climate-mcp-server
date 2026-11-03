@@ -23,6 +23,7 @@
 |:-------------|:------------|:-----------|
 | `noaa://datasets` | All available CDO datasets with IDs, names, and temporal coverage. | Stable small list (11–13 datasets via the API) — no pagination needed |
 | `noaa://stations/{stationId}` | Station metadata by ID (name, coordinates, elevation, data coverage). | n/a |
+| `skill://noaa-climate-guide/SKILL.md` | Published guide for climate comparisons, coverage, observation quality, and storm-to-station investigation; also discoverable through the MCP Skills extension. | n/a |
 
 ### Prompts
 
@@ -53,12 +54,16 @@ The API wraps `https://www.ncei.noaa.gov/cdo-web/api/v2/`.
 
 | Service | Wraps | Used By |
 |:--------|:------|:--------|
-| `CdoService` | NOAA CDO API v2 (`https://www.ncei.noaa.gov/cdo-web/api/v2/`) | Eight CDO tools, both resources |
+| `CdoService` | NOAA CDO API v2 (`https://www.ncei.noaa.gov/cdo-web/api/v2/`) | Eight CDO tools, both data resources |
 | `StormEventsService` | NCEI Storm Events bulk CSV export (`https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/`) | `noaa_climate_search_storm_events` |
 | `BillionDollarDisastersService` | NCEI Billion-Dollar Weather and Climate Disasters CSV exports (`https://www.ncei.noaa.gov/access/billions/`) | `noaa_climate_get_billion_dollar_disasters` |
 | `CsvStreamReader` (`src/services/csv/`) | Not an upstream — the incremental RFC 4180 reader both bulk-CSV services parse with | `StormEventsService`, `BillionDollarDisastersService` |
 
 **Parameter name translation.** MCP input schemas use camelCase (`datasetId`, `locationId`, `stationId`, `datatypeId`, `datacategoryId`). The CDO API requires all lowercase (`datasetid`, `locationid`, `stationid`, `datatypeid`, `datacategoryid`). `CdoService` is responsible for this translation — do not rely on the caller to pass lowercase keys.
+
+**Station IDs share one normalization rule.** Station filters, station lookup, and the station resource trim surrounding whitespace, uppercase IDs, and prefix bare 11-character GHCN aliases with `GHCND:`. Other nonempty namespace/payload pairs, including additional colons in the payload, remain accepted. Ambiguous unprefixed IDs and empty namespaces/payloads fail schema validation. Successful tools compose normalization notices; the resource preserves its existing station result shape.
+
+**Observation queries share one serializer and one length check.** `/data` rejects an encoded query longer than 4000 characters before fetch or retry, after canonical dates, defaults, metadata, and offset conversion are serialized. Recovery asks callers to reduce filters and make separate calls; filters are never discarded or implicitly split. Other endpoints have no such local ceiling.
 
 **Storm Events is a second upstream, not an extension of CDO.** There is no token, no JSON envelope, and no `resolveCollectionTotal()` — a bulk CSV result set has a known total once scanned, so `totalCount` and `exhausted` are computed directly. Transport failure explanations share `src/services/upstream-failure.ts` with the other clients; retry policies remain service-specific. Three properties of the upstream shape the service:
 
@@ -260,7 +265,7 @@ Use `NORMAL_HLY` (hourly) or `NORMAL_MLY` (monthly) for coarser granularity. All
 
 ### `noaa_climate_fetch_data`
 
-- **Description**: Fetch historical observation records from a NOAA CDO dataset for a given date range. Requires a `datasetId` (e.g., `GHCND` for daily, `GSOM` for monthly), `startDate`, and `endDate`. Optionally scope to specific stations, locations, and data types. Sub-daily, daily, and radar data (GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3) is limited to a 1-year date range per request; monthly and annual data (GSOM, GSOY, NORMAL_MLY, NORMAL_ANN) is limited to 10 years. Returns a flat array of `{ date, datatype, station, value, attributes }` records. Specify `units=metric` or `units=standard` to scale values; without a `units` parameter, raw unscaled values are returned — for GHCND, temperatures are in tenths of degrees and precipitation in tenths of mm (e.g., raw TMAX=256 → 25.6°C with `units=metric`; raw PRCP=12 → 1.2mm).
+- **Description**: Fetch historical observation records for a required `datasetId`, `startDate`, and `endDate`, optionally filtered by stations, locations, and datatypes. Sub-daily, daily, and radar datasets allow 1 year; GSOM/GSOY/NORMAL_MLY/NORMAL_ANN allow 10 years, through the end of the corresponding calendar month. Returns flat records with optional `value`, `missing`, raw `attributes`, and GHCND-only decoded `flags`. Identified PRECIP_HLY/HPCP and PRECIP_15/QPCP missing sentinels omit `value` and set `missing: true`; GHCND quality failures retain their numeric values. Missing/QC counts describe the returned page and compose with units, normalization, clamp, and paging notices.
 - **Input**:
   - `datasetId: string` — `.describe('Dataset ID (e.g., GHCND for daily data, GSOM for monthly, GSOY for annual, NORMAL_DLY/MLY/ANN/HLY for 1981-2010 climate normals, NEXRAD2/NEXRAD3 for weather radar). Determines the date range limit: sub-daily, daily, and radar datasets (GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3) allow 1-year max per request; monthly/annual datasets (GSOM, GSOY, NORMAL_MLY, NORMAL_ANN) allow 10-year max.')` 
   - `startDate: string` (ISO date `YYYY-MM-DD`) — `.describe('Start date for observations. For NORMAL_* datasets use 2010-01-01 regardless of the years being analyzed.')`
@@ -268,11 +273,11 @@ Use `NORMAL_HLY` (hourly) or `NORMAL_MLY` (monthly) for coarser granularity. All
   - `stationId?: string[]` — `.describe('One or more station IDs to filter by (e.g., ["GHCND:USW00024233"]). Obtain from noaa_climate_find_stations. Serialized to ampersand-chained query params.')`
   - `locationId?: string[]` — `.describe('One or more location IDs to filter by (e.g., ["FIPS:37", "ZIP:98101"]). Broader than stationId — returns all data within the location.')`
   - `datatypeId?: string[]` — `.describe('One or more data type IDs to include (e.g., ["TMAX","TMIN","PRCP"]). Without this, all data types for the dataset are returned. Use noaa_climate_list_data_types to discover valid IDs.')`
-  - `units?: enum('standard'|'metric')` — `.describe('Unit system for returned values. Without this, GHCND returns raw tenths-of-unit integers (TMAX=256 = 25.6°C). Strongly recommended: pass metric or standard to get human-readable scaled values.')`
+  - `units?: enum('standard'|'metric')` — explicit conversion; omission preserves datatype-specific raw values and adds guidance, including on empty pages. GHCND TMAX/TMIN use tenths °C, PRCP tenths mm, and SNOW/SNWD whole mm; GSOM/GSOY temperature/precipitation examples use °C/mm; NORMAL_* temperature normals use tenths °F and precipitation normals hundredths inches; HPCP/QPCP use hundredths inches. These examples are not conversion rules for wind, directions, counts, or percentages.
   - `includemetadata?: boolean (default true)`
   - `sortField?`, `sortOrder?`, `limit`, `offset`
-- **Output**: `{ results: Array<{ date, datatype, station, value, attributes }>, metadata?: { resultset: { count, limit, offset } } }`
-- **Errors**: `{ reason: 'service_unavailable', code: ServiceUnavailable, when: 'CDO API is down or unreachable', retryable: true }`, `{ reason: 'date_range_exceeded', code: InvalidParams, when: 'Date range exceeds 1 year for sub-daily/daily/radar datasets (GHCND, PRECIP_*, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3) or 10 years for monthly/annual datasets (GSOM, GSOY, NORMAL_MLY, NORMAL_ANN)' }`, `{ reason: 'upstream_auth_failed', code: ConfigurationError, when: 'CDO rejected the API token this server is configured with' }`, `{ reason: 'validation_error', code: ValidationError, when: 'Bad dataset ID, date format, or unknown station/location ID' }`
+- **Output**: `{ results: Array<{ date, datatype, station, value?: number, missing?: true, attributes?: string, flags?: { measurement?, quality?, source?, observationTime? } }>, metadata?: { resultset: { count, limit, offset } } }`. GHCND flags preserve positional blanks, unknown codes, and observation-time leading zeros; absent trailing slots stay omitted. Nonblank `flags.quality` means a failed quality check. Other datasets retain raw attributes without GHCND decoding. Precipitation sentinels are matched only for HPCP/QPCP in their respective datasets and requested unit systems: raw `99999`, standard `999.99`, metric `25399.75`.
+- **Errors**: `{ reason: 'service_unavailable', code: ServiceUnavailable, when: 'CDO API is down or unreachable', retryable: true }`, `{ reason: 'date_range_exceeded', code: ValidationError, when: 'Date range exceeds the dataset calendar-month boundary' }`, `{ reason: 'upstream_auth_failed', code: ConfigurationError, when: 'CDO rejected the configured API token' }`, `{ reason: 'validation_error', code: ValidationError, when: 'Invalid dataset, dates, or filter IDs, or an encoded observation query over 4000 characters' }`.
 - **Annotations**: `readOnlyHint: true`, `openWorldHint: true`
 
 ---
@@ -301,7 +306,7 @@ The 5 req/s limit is best managed at the HTTP client level (token-bucket or retr
 The primary workflow (find location → find stations → fetch data) is simple enough for agents to execute step-by-step with three tool calls. The intermediate state (location IDs, station IDs) is naturally captured by the agent. A composite workflow tool would save a round-trip but at the cost of a bloated, hard-to-test tool with many conditional parameters. Keep tools focused.
 
 **6. Resources are supplementary only.**
-`noaa://datasets` provides injectable context for clients that support resources, covering the small stable dataset list. `noaa://stations/{stationId}` mirrors `noaa_climate_get_station`. Both are optional — tools cover the same data.
+`noaa://datasets` provides injectable context for clients that support resources, covering the small stable dataset list. `noaa://stations/{stationId}` mirrors `noaa_climate_get_station`. Both data resources are optional — tools cover the same data. The published `skills/noaa-climate-guide/SKILL.md` is also served as `skill://noaa-climate-guide/SKILL.md` and through the MCP Skills extension, so workflow guidance reaches resource-capable clients as well as plugin hosts. npm, MCPB, and Docker retain the root `skills/` tree.
 
 **7. No prompt templates.**
 This is a data-access server. The interaction patterns are "query → result", not structured workflows that benefit from templates.
@@ -317,7 +322,7 @@ The CDO API supports comma-separated or chained IDs for filtering. Accepting arr
 - **No upstream text search on locations.** The `/locations` endpoint has no name-search or substring-filter parameter — only `sortfield=name` for alphabetical ordering. `noaa_climate_find_locations` synthesizes one client-side via `nameContains`: it enumerates the requested category (up to four `limit=1000` fetches, the largest burst that fits inside CDO's 5-requests-per-second limit) and substring-matches the names, which covers every category of at most 4,000 locations — every one but `ZIP` (30,415). Past the limit, narrow with `datasetId`/`datacategoryId`, page alphabetically, or use a known location ID format (e.g., `FIPS:37` for NC). Station search by `locationId` still requires an exact location ID — there is no name-based station lookup.
 - **Date range limits.** Sub-daily, daily, and radar datasets are limited to 1-year per request; monthly/annual to 10 years. Multi-year daily analyses require sequential requests — each consuming daily quota.
 - **10,000 requests/day ceiling.** Bulk historical analysis across many stations and long date ranges will hit the daily limit. Agents should prefer monthly (GSOM) or annual (GSOY) datasets when fine-grained daily data isn't needed.
-- **Raw units by default.** Without `units=metric` or `units=standard`, GHCND returns unscaled integer values (TMAX=256 = raw tenths-of-degrees-C, i.e., 25.6°C). GSOM/GSOY values are already scaled. Always recommend passing a `units` parameter so agents don't receive raw tenths-of-unit integers they must interpret manually. The `format()` function should annotate the unit system actually applied.
+- **Raw units by default.** Omitted units preserve datatype-specific scales; the response provides examples and a NOAA documentation link, not complete unit metadata. Prefer explicit metric/standard conversion and establish each datatype's units before aggregation. Missing precipitation is never zero; GHCND QC failures require an explicit inclusion policy.
 - **Climate normals are date-range-fixed.** NORMAL_DLY/MLY/ANN/HLY normals are the 1981–2010 climatological normals. Despite spanning 30 years of source data, they are accessed with `startdate=2010-01-01` and `enddate=2010-12-31` — the API uses 2010 as the proxy year for all normals queries. This is an API convention, not a bug.
 
 ---
