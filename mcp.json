@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "noaa-climate-mcp-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cyanheads/noaa-climate-mcp-server"],
+      "env": { "MCP_TRANSPORT_TYPE": "stdio" }
+    }
+  }
+}

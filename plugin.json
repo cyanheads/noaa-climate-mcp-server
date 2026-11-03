@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "noaa-climate-mcp-server",
+  "version": "0.7.1",
+  "description": "Search NOAA climate stations and datasets, fetch historical weather observations via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "Casey Hand",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
+  },
+  "homepage": "https://github.com/cyanheads/noaa-climate-mcp-server#readme",
+  "repository": "https://github.com/cyanheads/noaa-climate-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "typescript",
+    "bun",
+    "stdio",
+    "streamable-http",
+    "ai-agent",
+    "noaa",
+    "climate",
+    "weather",
+    "cdo",
+    "historical-weather",
+    "observations"
+  ]
+}
