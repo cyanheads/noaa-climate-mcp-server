@@ -1,7 +1,8 @@
 /**
  * @fileoverview Tests for the CDO failure explanation path — CDO's own
- * `developerMessage` (XML) or `message` (JSON) reaching the thrown error, and
- * the request URL staying out of it.
+ * `developerMessage` (XML) or `message` (JSON) reaching the thrown error, an
+ * HTML error page reaching it only as its `<title>`, and the request URL
+ * staying out of it.
  * @module tests/services/cdo-error-explanation.test
  */
 
@@ -181,8 +182,64 @@ describe('CdoService — upstream failure explanation', () => {
     );
 
     expect(error.data?.upstreamMessage).toBeUndefined();
-    expect(error.message).toContain('HTTP 414');
+    expect(error.message).toBe(
+      'NOAA CDO returned HTTP 414 (414 Request-URI Too Long) for /datatypes.',
+    );
     expect((error.data?.recovery as { hint?: string } | undefined)?.hint).toMatch(/fewer values/i);
+  });
+
+  it('names a proxy error page by its title and never mines its markup for a message', async () => {
+    // A JSON-looking `"message"` inside a page's inline script is not CDO
+    // explaining anything; it would hand the caller markup as the explanation.
+    vi.mocked(fetch).mockResolvedValueOnce(
+      errorResponse(
+        403,
+        '<!DOCTYPE html>\n<html><head><title>\n  Access   denied\n</title><script>window.cfg = {"message": "<b>blocked</b>"};</script></head><body><h1>Access denied</h1></body></html>',
+        'text/html',
+      ),
+    );
+
+    const error = await captureFailure((service) => service.listDatasets({}, createMockContext()));
+
+    expect(error.data?.upstreamMessage).toBeUndefined();
+    expect(error.message).toBe('NOAA CDO returned HTTP 403 (Access denied) for /datasets.');
+    expect((error.data?.recovery as { hint?: string } | undefined)?.hint).toMatch(/fewer values/i);
+  });
+
+  it('falls back to the bare status for an error page with no title', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      errorResponse(502, '<html><body><h1>Bad Gateway</h1></body></html>', 'text/html'),
+    );
+
+    const error = await captureFailure((service) => service.listDatasets({}, createMockContext()));
+
+    expect(error.message).toBe('NOAA CDO returned HTTP 502 for /datasets.');
+  });
+
+  it('strips markup inside an error page title', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      errorResponse(
+        403,
+        '<!DOCTYPE html><html><head><title>Request <b>blocked</b> by proxy</title></head><body></body></html>',
+        'text/html',
+      ),
+    );
+
+    const error = await captureFailure((service) => service.listDatasets({}, createMockContext()));
+
+    expect(error.message).toBe(
+      'NOAA CDO returned HTTP 403 (Request blocked by proxy) for /datasets.',
+    );
+  });
+
+  it('quotes no title from a body that is not an HTML page', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      errorResponse(503, 'upstream down <title>not a page</title>', 'text/plain'),
+    );
+
+    const error = await captureFailure((service) => service.listDatasets({}, createMockContext()));
+
+    expect(error.message).toBe('NOAA CDO returned HTTP 503 for /datasets.');
   });
 
   it('leaves an unexplained failure body alone but still keeps the URL out of the message', async () => {
@@ -265,5 +322,24 @@ describe.each([
     expect(error.message).toContain(operation);
     expect(error.message).toContain('503');
     expect(error.message).not.toContain('https://');
+  });
+
+  it('names an HTML error page by its title, never its markup', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            '<!DOCTYPE html><html><head><title>503 Service Unavailable</title></head><body><h1>Service Unavailable</h1></body></html>',
+            { status: 503, headers: { 'Content-Type': 'text/html' } },
+          ),
+        ),
+    );
+    const error = (await run().catch((cause: unknown) => cause)) as McpError;
+    expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect(error.message).toContain(operation);
+    expect(error.message).toContain('HTTP 503 (503 Service Unavailable)');
+    expect(error.message).not.toMatch(/[<>]/);
   });
 });

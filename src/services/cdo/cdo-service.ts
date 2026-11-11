@@ -8,7 +8,11 @@ import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
-import { explainUpstreamFailure } from '@/services/upstream-failure.js';
+import {
+  describeHttpStatus,
+  explainUpstreamFailure,
+  isHtmlPage,
+} from '@/services/upstream-failure.js';
 import type {
   CdoCollectionResponse,
   CdoDataCategory,
@@ -43,14 +47,16 @@ const ERROR_BODY_LIMIT = 2_000;
  * parameter 'startdate' is missing.", "sortfield must be one of the following
  * allowed values: […]". The token failures are the exception: those are JSON
  * with a `message` key. Both are matched by pattern rather than parsed, so a
- * body clipped at the byte budget still yields its message.
+ * body clipped at the byte budget still yields its message. An HTML page — a
+ * web server's or a proxy's — is never mined for one: what it holds is markup,
+ * and {@link describeHttpStatus} names it by its title instead.
  */
 const DEVELOPER_MESSAGE_PATTERN = /<developerMessage>([\s\S]*?)<\/developerMessage>/;
 const USER_MESSAGE_PATTERN = /<userMessage>([\s\S]*?)<\/userMessage>/;
 const JSON_MESSAGE_PATTERN = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
 function extractUpstreamMessage(body: unknown): string | undefined {
-  if (typeof body !== 'string') return undefined;
+  if (typeof body !== 'string' || isHtmlPage(body)) return undefined;
   const matched =
     DEVELOPER_MESSAGE_PATTERN.exec(body) ??
     USER_MESSAGE_PATTERN.exec(body) ??
@@ -80,7 +86,9 @@ const UNEXPLAINED_FAILURE_HINT =
  * that separates a bad date form from an over-long range from a missing
  * parameter, and puts the fully-parameterized request URL in front of the
  * client. The body is not lost, though: the helper captures it under
- * `data.body`, so the explanation is recoverable here.
+ * `data.body` on the thrown error, so the explanation is recoverable here. That
+ * capture stays server-side — it never reaches a client envelope — so the
+ * message is the only way CDO's explanation reaches the caller.
  *
  * The status-mapped code and every `data` field are carried through unchanged
  * — the retry predicate and each tool's `InvalidParams` routing both read them
@@ -96,7 +104,7 @@ function explainCdoFailure(error: unknown, path: string): unknown {
   const upstreamMessage = extractUpstreamMessage(error.data?.body);
   const message = upstreamMessage
     ? `NOAA CDO rejected the request to /${path} (HTTP ${status}): ${upstreamMessage}`
-    : `NOAA CDO returned HTTP ${status} for /${path}.`;
+    : `NOAA CDO returned ${describeHttpStatus(status, error.data?.body)} for /${path}.`;
 
   return new McpError(
     error.code,
@@ -205,7 +213,7 @@ export class CdoService {
         }
 
         const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+        if (isHtmlPage(text)) {
           const { serviceUnavailable } = await import('@cyanheads/mcp-ts-core/errors');
           throw serviceUnavailable(
             'NOAA CDO returned HTML instead of JSON — likely rate-limited.',
