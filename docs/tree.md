@@ -1,6 +1,6 @@
 # noaa-climate-mcp-server - Directory Structure
 
-Generated on: 2026-11-03 08:26:41
+Generated on: 2026-11-11 16:14:47
 
 ```text
 noaa-climate-mcp-server/
@@ -32,6 +32,7 @@ noaa-climate-mcp-server/
 │   ├── 0.6.x/
 │   ├── 0.7.x/
 │   ├── 0.8.x/
+│   ├── 0.9.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -166,6 +167,7 @@ noaa-climate-mcp-server/
 │   │           ├── noaa-climate-find-locations.tool.ts
 │   │           ├── noaa-climate-find-stations.tool.ts
 │   │           ├── noaa-climate-get-billion-dollar-disasters.tool.ts
+│   │           ├── noaa-climate-get-normals.tool.ts
 │   │           ├── noaa-climate-get-station.tool.ts
 │   │           ├── noaa-climate-list-data-categories.tool.ts
 │   │           ├── noaa-climate-list-data-types.tool.ts
@@ -182,6 +184,9 @@ noaa-climate-mcp-server/
 │   │   │   └── types.ts
 │   │   ├── csv/
 │   │   │   └── csv-stream-reader.ts
+│   │   ├── normals/
+│   │   │   ├── normals-service.ts
+│   │   │   └── types.ts
 │   │   ├── storm-events/
 │   │   │   ├── damage.ts
 │   │   │   ├── storm-events-service.ts
@@ -192,14 +197,17 @@ noaa-climate-mcp-server/
 │   ├── config/
 │   │   └── server-config.test.ts
 │   ├── fixtures/
-│   │   └── billion-dollar-disasters.ts
+│   │   ├── billion-dollar-disasters.ts
+│   │   └── normals.ts
 │   ├── helpers/
 │   │   ├── content.ts
 │   │   ├── contract-failure.ts
 │   │   ├── example-identifiers.ts
+│   │   ├── linear-cpu.ts
 │   │   └── resource-failure.ts
 │   ├── live/
-│   │   └── example-identifiers.live.test.ts
+│   │   ├── example-identifiers.live.test.ts
+│   │   └── normals.live.test.ts
 │   ├── prompts/
 │   ├── resources/
 │   │   ├── noaa-datasets.resource.test.ts
@@ -214,9 +222,11 @@ noaa-climate-mcp-server/
 │   │   ├── cdo-service.test.ts
 │   │   ├── cdo-upstream-500-retry.test.ts
 │   │   ├── csv-stream-reader.test.ts
+│   │   ├── normals-service.test.ts
 │   │   ├── storm-events-damage.test.ts
 │   │   └── storm-events-service.test.ts
 │   ├── tools/
+│   │   ├── cdo-upstream-body-wire.test.ts
 │   │   ├── cdo-upstream-outage-contract.test.ts
 │   │   ├── cdo-upstream-rejection-routing.test.ts
 │   │   ├── date-wire-normalization.test.ts
@@ -233,6 +243,7 @@ noaa-climate-mcp-server/
 │   │   ├── noaa-climate-find-stations-extended.tool.test.ts
 │   │   ├── noaa-climate-find-stations.tool.test.ts
 │   │   ├── noaa-climate-get-billion-dollar-disasters.tool.test.ts
+│   │   ├── noaa-climate-get-normals.tool.test.ts
 │   │   ├── noaa-climate-get-station-extended.tool.test.ts
 │   │   ├── noaa-climate-get-station.tool.test.ts
 │   │   ├── noaa-climate-list-data-categories-extended.tool.test.ts

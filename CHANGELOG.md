@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.9.0](changelog/0.9.x/0.9.0.md) — 2026-11-11
+
+Adds noaa_climate_get_normals for NOAA's 1991–2020 climate normals, and county FIPS, CDO location IDs, WFO, and end coordinates with a countyFips filter on storm events.
+
 ## [0.8.0](changelog/0.8.x/0.8.0.md) — 2026-11-03 · ⚠️ Breaking
 
 Climate observation quality and station IDs
