@@ -8,6 +8,13 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 const HTML_PAGE_PATTERN = /^\s*<(!DOCTYPE\s+html|html[\s>])/i;
 const HTML_TITLE_PATTERN = /<title[^>]*>([\s\S]*?)<\/title>/i;
 
+/**
+ * A tag, or one left unclosed through the end of the title. Every `<` starts a
+ * match, so no `<` survives the strip; a pattern for closed tags alone would
+ * pass `Blocked <script` through as the opening of an element.
+ */
+const TITLE_TAG_PATTERN = /<[^>]*(?:>|$)/g;
+
 /** Whether a response body is an HTML page — a web server's or a proxy's, never an API payload. */
 export function isHtmlPage(text: string): boolean {
   return HTML_PAGE_PATTERN.test(text);
@@ -25,7 +32,7 @@ export function isHtmlPage(text: string): boolean {
 export function describeHttpStatus(status: number, body: unknown): string {
   if (typeof body !== 'string' || !isHtmlPage(body)) return `HTTP ${status}`;
   const title = HTML_TITLE_PATTERN.exec(body)?.[1]
-    ?.replace(/<[^>]*>/g, '')
+    ?.replace(TITLE_TAG_PATTERN, '')
     .replace(/\s+/g, ' ')
     .trim();
   return title ? `HTTP ${status} (${title})` : `HTTP ${status}`;

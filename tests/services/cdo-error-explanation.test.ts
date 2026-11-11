@@ -232,6 +232,20 @@ describe('CdoService — upstream failure explanation', () => {
     );
   });
 
+  it('lets no "<" through from a tag left unclosed inside an error page title', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      errorResponse(
+        403,
+        '<!DOCTYPE html><html><head><title>Request <b>blocked</b> <script</title></head><body></body></html>',
+        'text/html',
+      ),
+    );
+
+    const error = await captureFailure((service) => service.listDatasets({}, createMockContext()));
+
+    expect(error.message).toBe('NOAA CDO returned HTTP 403 (Request blocked) for /datasets.');
+  });
+
   it('quotes no title from a body that is not an HTML page', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       errorResponse(503, 'upstream down <title>not a page</title>', 'text/plain'),
