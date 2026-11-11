@@ -10,6 +10,7 @@ import { noaaClimateFetchData } from '@/mcp-server/tools/definitions/noaa-climat
 import { noaaClimateFindLocations } from '@/mcp-server/tools/definitions/noaa-climate-find-locations.tool.js';
 import { noaaClimateFindStations } from '@/mcp-server/tools/definitions/noaa-climate-find-stations.tool.js';
 import { noaaClimateGetBillionDollarDisasters } from '@/mcp-server/tools/definitions/noaa-climate-get-billion-dollar-disasters.tool.js';
+import { noaaClimateGetNormals } from '@/mcp-server/tools/definitions/noaa-climate-get-normals.tool.js';
 import { noaaClimateGetStation } from '@/mcp-server/tools/definitions/noaa-climate-get-station.tool.js';
 import { noaaClimateListDataCategories } from '@/mcp-server/tools/definitions/noaa-climate-list-data-categories.tool.js';
 import { noaaClimateListDataTypes } from '@/mcp-server/tools/definitions/noaa-climate-list-data-types.tool.js';
@@ -28,6 +29,7 @@ const tools = [
   noaaClimateFetchData,
   noaaClimateSearchStormEvents,
   noaaClimateGetBillionDollarDisasters,
+  noaaClimateGetNormals,
 ];
 
 describe('tool naming', () => {
@@ -37,6 +39,7 @@ describe('tool naming', () => {
         'noaa_climate_fetch_data',
         'noaa_climate_find_locations',
         'noaa_climate_find_stations',
+        'noaa_climate_get_normals',
         'noaa_climate_get_station',
         'noaa_climate_list_data_categories',
         'noaa_climate_list_data_types',

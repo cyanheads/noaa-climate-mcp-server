@@ -9,9 +9,11 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyPageLimit,
+  ghcnStationIdFilter,
   identifierArrayFilter,
   identifierFilter,
   isoDateFilter,
+  normalizeGhcnStationId,
   normalizeStationId,
   stationIdArrayFilter,
   stationIdFilter,
@@ -19,6 +21,7 @@ import {
   toCdoWireDate,
   toUtcMillis,
 } from '@/mcp-server/tools/definitions/shared/validation.js';
+import { expectLinearCpu } from '../helpers/linear-cpu.js';
 
 const metric = vi.hoisted(() => ({ add: vi.fn() }));
 vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
@@ -365,5 +368,68 @@ describe('toCdoWireDate', () => {
     for (const v of ['20240701', '2024-7-1', '2024-07-01', '2024-7-1T12:30:45']) {
       expect(toUtcMillis(toCdoWireDate(v) as string)).toBe(toUtcMillis(v));
     }
+  });
+});
+
+describe('GHCN-Daily station identifiers', () => {
+  const schema = ghcnStationIdFilter('Station.');
+  const advertised = new RegExp(z.toJSONSchema(schema, { io: 'input' }).pattern ?? '(?!)');
+
+  it.each([
+    ['USW00024233', 'USW00024233'],
+    ['usw00024233', 'USW00024233'],
+    [' USW00024233\t', 'USW00024233'],
+    ['GHCND:USW00024233', 'USW00024233'],
+    ['ghcnd:usw00024233 ', 'USW00024233'],
+    [' \tGhCnD:US1WAKG0210\r\n', 'US1WAKG0210'],
+    ['USC00454769', 'USC00454769'],
+    // NCEI matches IDs case-sensitively; these legacy CoCoRaHS IDs are mixed-case as published.
+    ['US10adam002', 'US10adam002'],
+    ['GHCND:US10adam002', 'US10adam002'],
+    ['ghcnd:US1Colf1831', 'US1Colf1831'],
+    ['US10box_001', 'US10box_001'],
+  ])('accepts %j and sends it as %s', (input, bare) => {
+    expect(schema.parse(input)).toBe(input);
+    expect(normalizeGhcnStationId(input)).toBe(bare);
+    expect(advertised.test(input)).toBe(true);
+  });
+
+  it.each([
+    '',
+    ' ',
+    'COOP:454769',
+    'NEXRAD:KATX',
+    'GHCND:',
+    'GHCND:USW0002423',
+    'GHCN:USW00024233',
+    'GHCND:GHCND:USW00024233',
+    'USW0002423',
+    'USW000242333',
+    '12345678901',
+    'USW 0024233',
+    'USW00024233:',
+  ])('rejects %j, which the bare-ID service would answer with no rows', (input) => {
+    const result = schema.safeParse(input);
+    expect(result.success).toBe(false);
+    expect(advertised.test(input)).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain('USW00024233');
+  });
+
+  it('advertises the bare form it sends', () => {
+    expect(schema.description).toContain('GHCND:USW00024233 → USW00024233');
+  });
+
+  it.each([
+    ['digits', (n: number) => '1'.repeat(n), 320_000],
+    ['overlapping prefixes', (n: number) => 'GHCND:'.repeat(n / 6), 80_000],
+    [
+      'padding around an ID',
+      (n: number) => `${' '.repeat(n / 2)}USW00024233${' '.repeat(n / 2)}!`,
+      80_000,
+    ],
+    ['trailing break', (n: number) => `${'x '.repeat(n / 2)}\ny`, 80_000],
+    ['breaks throughout', (n: number) => '  \r\n'.repeat(n / 4), 80_000],
+  ] as const)('matches in linear CPU time for %s', (_label, shape, maximum) => {
+    expectLinearCpu((text) => schema.safeParse(text), shape, maximum);
   });
 });

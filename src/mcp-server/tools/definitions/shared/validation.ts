@@ -244,6 +244,48 @@ export function stationNormalizationNotice(values: readonly string[]): string | 
 }
 
 /**
+ * A bare 11-character GHCN-Daily ID, or the same ID in its CDO `GHCND:` form.
+ * The prefix is case-insensitive; the ID admits the lowercase letters and
+ * underscore a few hundred legacy CoCoRaHS IDs carry (`US10adam002`, `US10box_001`).
+ */
+const GHCN_STATION_ID_PATTERN = /^\s*(?:[Gg][Hh][Cc][Nn][Dd]:)?[A-Za-z]{2}[A-Za-z0-9_]{9}\s*$/;
+const GHCND_PREFIX = /^ghcnd:/i;
+const GHCN_STATION_ID_MESSAGE =
+  'Use an 11-character GHCN-Daily station ID such as USW00024233, or its GHCND:USW00024233 form. Other namespaces such as COOP: are not accepted; noaa_climate_find_stations with datasetId GHCND returns GHCND: IDs.';
+
+/**
+ * A GHCN-Daily station ID for a source keyed on the bare form.
+ *
+ * Narrower than {@link stationIdFilter} on purpose: a `COOP:` or `NEXRAD:` ID
+ * passed through to a source that matches only bare GHCN IDs comes back as an
+ * empty result, which reads as "this station has no data" rather than "wrong
+ * ID form".
+ */
+export function ghcnStationIdFilter(description: string) {
+  return z
+    .string()
+    .min(1, { error: GHCN_STATION_ID_MESSAGE, abort: true })
+    .regex(GHCN_STATION_ID_PATTERN, GHCN_STATION_ID_MESSAGE)
+    .describe(
+      `${description} Trims surrounding whitespace, strips a GHCND: prefix (GHCND:USW00024233 → USW00024233), and uppercases an ID written all in lowercase. IDs are matched case-sensitively, so a mixed-case legacy ID such as US10adam002 is sent as written.`,
+    );
+}
+
+/**
+ * The bare form of a schema-validated GHCN-Daily station ID, as NCEI matches it.
+ *
+ * NCEI matches station IDs case-sensitively, and a few hundred legacy CoCoRaHS
+ * IDs are published mixed-case (`US10adam002`, `US1Colf1831`), so uppercasing
+ * every ID would turn those stations into empty results. Only an ID written all
+ * in lowercase is uppercased; any other is sent as written.
+ */
+export function normalizeGhcnStationId(value: string): string {
+  const trimmed = value.trim();
+  const id = GHCND_PREFIX.test(trimmed) ? trimmed.slice('GHCND:'.length) : trimmed;
+  return id === id.toLowerCase() ? id.toUpperCase() : id;
+}
+
+/**
  * A repeated CDO identifier filter. An empty array and blank entries are both
  * rejected: the service layer drops falsy entries when building the query
  * string, so either one silently widens the query instead of narrowing it.

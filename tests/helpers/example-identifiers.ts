@@ -25,6 +25,7 @@ export const DOCUMENTED_SOURCE_FILES = [
   'src/mcp-server/tools/definitions/noaa-climate-find-locations.tool.ts',
   'src/mcp-server/tools/definitions/noaa-climate-find-stations.tool.ts',
   'src/mcp-server/tools/definitions/noaa-climate-get-billion-dollar-disasters.tool.ts',
+  'src/mcp-server/tools/definitions/noaa-climate-get-normals.tool.ts',
   'src/mcp-server/tools/definitions/noaa-climate-get-station.tool.ts',
   'src/mcp-server/tools/definitions/noaa-climate-list-data-categories.tool.ts',
   'src/mcp-server/tools/definitions/noaa-climate-list-data-types.tool.ts',

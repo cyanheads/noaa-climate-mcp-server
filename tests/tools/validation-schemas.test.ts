@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noaaClimateFetchData } from '@/mcp-server/tools/definitions/noaa-climate-fetch-data.tool.js';
 import { noaaClimateFindLocations } from '@/mcp-server/tools/definitions/noaa-climate-find-locations.tool.js';
 import { noaaClimateFindStations } from '@/mcp-server/tools/definitions/noaa-climate-find-stations.tool.js';
+import { noaaClimateGetNormals } from '@/mcp-server/tools/definitions/noaa-climate-get-normals.tool.js';
 import { noaaClimateGetStation } from '@/mcp-server/tools/definitions/noaa-climate-get-station.tool.js';
 import { noaaClimateListDataCategories } from '@/mcp-server/tools/definitions/noaa-climate-list-data-categories.tool.js';
 import { noaaClimateListDataTypes } from '@/mcp-server/tools/definitions/noaa-climate-list-data-types.tool.js';
@@ -465,5 +466,46 @@ describe('noaa_climate_fetch_data — guards still fire for the compact and unpa
 
     const fetchData = vi.mocked(getCdoService)().fetchData as ReturnType<typeof vi.fn>;
     expect(fetchData.mock.calls[0]![0]).toMatchObject({ startdate: '2024-07-01' });
+  });
+});
+
+describe('noaa_climate_get_normals — GHCN-Daily station and datatype inputs', () => {
+  it.each(['COOP:454769', 'NEXRAD:KATX', 'KATX'])(
+    'rejects stationId %j with actionable examples on both surfaces, before any request',
+    async (stationId) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      try {
+        const result = await runToolContract(noaaClimateGetNormals, {
+          stationId,
+          granularity: 'monthly',
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: { code: -32602 } });
+        for (const example of ['USW00024233', 'GHCND:USW00024233', 'noaa_climate_find_stations']) {
+          expect(JSON.stringify(result.structuredContent)).toContain(example);
+          expect(JSON.stringify(result.content)).toContain(example);
+        }
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it.each(['', '   '])('rejects stationId %j', (stationId) => {
+    expect(
+      noaaClimateGetNormals.input.safeParse({ stationId, granularity: 'monthly' }).success,
+    ).toBe(false);
+  });
+
+  it.each([[[]], [['']], [['MLY-TAVG-NORMAL', '   ']]])('rejects datatypeId %j', (datatypeId) => {
+    expect(
+      noaaClimateGetNormals.input.safeParse({
+        stationId: 'USW00024233',
+        granularity: 'monthly',
+        datatypeId,
+      }).success,
+    ).toBe(false);
   });
 });
