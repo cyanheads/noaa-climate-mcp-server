@@ -48,34 +48,45 @@ const LISTING_HTML = `
 <a href="StormEvents_locations-ftp_v1.0_d2024_c20260728.csv.gz">StormEvents_locations-ftp_v1.0_d2024_c20260728.csv.gz</a>
 </pre></body></html>`;
 
+/**
+ * The county and location columns sit last so a row written before they were
+ * read — the 1950 row, the H-magnitude row — leaves them absent, as an export
+ * missing them would. The export itself writes `STATE_FIPS` and `CZ_FIPS` as
+ * unquoted, unpadded integers.
+ */
 const HEADER =
   'BEGIN_YEARMONTH,EPISODE_ID,EVENT_ID,STATE,EVENT_TYPE,CZ_TYPE,CZ_NAME,BEGIN_DATE_TIME,CZ_TIMEZONE,END_DATE_TIME,' +
   'INJURIES_DIRECT,INJURIES_INDIRECT,DEATHS_DIRECT,DEATHS_INDIRECT,DAMAGE_PROPERTY,DAMAGE_CROPS,SOURCE,MAGNITUDE,' +
-  'MAGNITUDE_TYPE,FLOOD_CAUSE,TOR_F_SCALE,TOR_LENGTH,TOR_WIDTH,BEGIN_LAT,BEGIN_LON,EPISODE_NARRATIVE,EVENT_NARRATIVE';
+  'MAGNITUDE_TYPE,FLOOD_CAUSE,TOR_F_SCALE,TOR_LENGTH,TOR_WIDTH,BEGIN_LAT,BEGIN_LON,EPISODE_NARRATIVE,EVENT_NARRATIVE,' +
+  'STATE_FIPS,CZ_FIPS,WFO,BEGIN_LOCATION,END_LAT,END_LON';
 
 const ROWS = [
-  // Billion-dollar hurricane row, quoted narrative with a comma and a doubled quote.
+  // Billion-dollar hurricane row, quoted narrative with a comma and a doubled quote. A zone row.
   '202409,195637,1209832,"FLORIDA","Hurricane (Typhoon)","Z","INLAND TAYLOR","26-SEP-24 16:00:00","EST-5","27-SEP-24 04:00:00",' +
     '"0","0","2","1","1.00B","75.00M","Official NWS Observations",,,,,,,29.9,-83.5,' +
-    '"Helene made landfall as a Category 4, then weakened.","A gust ""over 100 mph"" was measured."',
+    '"Helene made landfall as a Category 4, then weakened.","A gust ""over 100 mph"" was measured.",12,28,"TAE","",,',
   // Damage not reported at all — both cells empty.
   '202404,189851,1174463,"OKLAHOMA","Thunderstorm Wind","C","TILLMAN","30-APR-24 20:33:00","CST-6","30-APR-24 20:33:00",' +
-    '"0","0","0","0",,,"ASOS","55.00","MG",,,,,34.3444,-98.983,"Widely scattered storms.","Airport observation."',
+    '"0","0","0","0",,,"ASOS","55.00","MG",,,,,34.3444,-98.983,"Widely scattered storms.","Airport observation.",' +
+    '40,141,"OUN","FREDERICK ARPT",34.3444,-98.983',
   // Confirmed zero damage.
   '202407,193486,1195301,"LOUISIANA","Excessive Heat","Z","NATCHITOCHES","01-JUL-24 00:00:00","CST-6","05-JUL-24 09:00:00",' +
-    '"0","0","0","0","0.00K","0.00K","ASOS",,,,,,,,,"An upper ridge built in.",""',
+    '"0","0","0","0","0.00K","0.00K","ASOS",,,,,,,,,"An upper ridge built in.","",22,18,"SHV","",,',
   // Tornado with F-scale, length, and width; mid-range damage.
   '202405,190993,1182258,"TEXAS","Tornado","C","EASTLAND","25-MAY-24 16:42:00","CST-6","25-MAY-24 16:48:00",' +
-    '"3","0","0","0","100.00K","0.00K","Trained Spotter",,,,"EF2","2.46","70",32.3,-98.8,"Supercells.","Barn destroyed."',
+    '"3","0","0","0","100.00K","0.00K","Trained Spotter",,,,"EF2","2.46","70",32.3,-98.8,"Supercells.","Barn destroyed.",' +
+    '48,133,"FWD","PIONEER",32.1654,-99.0667',
   // Malformed damage cell — a suffix with no number, as the 2000 file writes.
   '202406,191111,1190000,"ILLINOIS","Thunderstorm Wind","C","COOK","10-JUN-24 14:00:00","CST-6","10-JUN-24 14:05:00",' +
-    '"0","0","0","0","K","","Public",,,,,,,41.8,-87.6,"Line of storms.","Tree down."',
+    '"0","0","0","0","K","","Public",,,,,,,41.8,-87.6,"Line of storms.","Tree down.",17,31,"LOT","CHICAGO",41.8,-87.6',
   // Abbreviated fractional damage, as older years write it.
   '202408,192222,1191000,"TEXAS","Flash Flood","C","HARRIS","02-AUG-24 03:00:00","CST-6","02-AUG-24 06:00:00",' +
-    '"0","0","0","0",".5M","0.00K","Emergency Manager",,,"Heavy Rain",,,,29.7,-95.3,"Training storms.","Roads closed."',
+    '"0","0","0","0",".5M","0.00K","Emergency Manager",,,"Heavy Rain",,,,29.7,-95.3,"Training storms.","Roads closed.",' +
+    '48,201,"HGX","HOUSTON",29.7,-95.3',
   // Second Texas tornado, a different month, so month filtering has something to separate.
   '202411,197838,1223377,"TEXAS","Tornado","C","DENTON","16-NOV-24 02:30:00","CST-6","16-NOV-24 02:41:00",' +
-    '"0","0","0","0","25.00K","0.00K","Broadcast Media",,,,"EF0","0.5","50",33.2,-97.1,"Cold front.","Fence damage."',
+    '"0","0","0","0","25.00K","0.00K","Broadcast Media",,,,"EF0","0.5","50",33.2,-97.1,"Cold front.","Fence damage.",' +
+    '48,121,"FWD","DENTON",33.21,-97.08',
 ];
 
 const CSV_1950 =
@@ -273,6 +284,34 @@ describe('StormEventsService — parsing the gzip bundle', () => {
     expect(heat?.torFScale).toBeUndefined();
     expect(heat?.floodCause).toBeUndefined();
     expect(heat?.eventNarrative).toBeUndefined();
+  });
+
+  it('projects a row lacking the county and location cells to exactly the fields it carries', async () => {
+    const service = new StormEventsService(BASE);
+    const result = await service.search({ ...baseQuery, year: 1950 }, createMockContext());
+
+    // Strict: a key present with an undefined value, an empty string, or a zero fails it.
+    expect(result.events[0]).toStrictEqual({
+      eventId: '10096222',
+      eventType: 'Tornado',
+      state: 'OKLAHOMA',
+      beginDateTime: '28-APR-50 14:45:00',
+      countyOrZone: 'WASHITA',
+      countyOrZoneType: 'C',
+      endDateTime: '28-APR-50 14:45:00',
+      timezone: 'CST',
+      torFScale: 'F3',
+      torLengthInMiles: 3.4,
+      torWidthInYards: 400,
+      injuriesDirect: 0,
+      injuriesIndirect: 0,
+      deathsDirect: 0,
+      deathsIndirect: 0,
+      damageProperty: { raw: '250K', amountInUsd: 250_000 },
+      damageCrops: { raw: '0.00K', amountInUsd: 0 },
+      beginLatitude: 35.2,
+      beginLongitude: -99,
+    });
   });
 
   it('omits episodeId for pre-1996 rows, which carry no episode', async () => {
@@ -647,6 +686,198 @@ describe('StormEventsService — filtering', () => {
     ]);
     expect(result.statesInYear).toContain('FLORIDA');
     expect(result.statesInYear).toContain('OKLAHOMA');
+  });
+});
+
+describe('StormEventsService — county FIPS and location columns', () => {
+  const FILE = `${BASE}StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz`;
+  const LOCATION_FIELDS = [
+    'stateFips',
+    'czFips',
+    'cdoLocationId',
+    'wfo',
+    'beginLocation',
+    'endLatitude',
+    'endLongitude',
+  ] as const;
+
+  /**
+   * One row per `CZ_TYPE` and `STATE_FIPS` class the exports carry, cut from the
+   * 2024, 2005, and 2026 files: county rows in a state, at both ends of the
+   * Census range, in Alaska and three territories; a forecast-zone row whose
+   * codes compose the same digits as a county; a marine row; the stray `5`
+   * type; blank cells; and two cells that are not 1–2 / 1–3 digit codes.
+   * Damage is blank on five rows so exclusion counting can be scoped.
+   */
+  const COUNTY_HEADER =
+    'EVENT_ID,EVENT_TYPE,STATE,STATE_FIPS,CZ_TYPE,CZ_FIPS,CZ_NAME,WFO,BEGIN_DATE_TIME,BEGIN_YEARMONTH,' +
+    'BEGIN_LOCATION,BEGIN_LAT,BEGIN_LON,END_LAT,END_LON,DAMAGE_PROPERTY';
+  const COUNTY_ROWS = [
+    '1169616,"Tornado","WASHINGTON",53,"C",43,"LINCOLN","OTX","26-MAR-24 16:45:00",202403,"ROCKLYN","47.6507","-118.2383","47.6506","-118.2383","0.00K"',
+    'lincolnUnreported,"Hail","WASHINGTON",53,"C",43,"LINCOLN","OTX","18-MAY-24 15:10:00",202405,"DAVENPORT","47.65","-118.15","47.65","-118.15",',
+    'lincolnZone,"Winter Storm","WASHINGTON",53,"Z",43,"WASHINGTON PALOUSE","OTX","05-JAN-24 08:00:00",202401,"",,,,,',
+    'spokane,"Hail","WASHINGTON",53,"C",63,"SPOKANE","OTX","18-MAY-24 15:30:00",202405,"SPOKANE","47.66","-117.43","47.66","-117.43",',
+    'autauga,"Thunderstorm Wind","ALABAMA",1,"C",1,"AUTAUGA","BMX","09-MAY-24 18:00:00",202405,"PRATTVILLE","32.46","-86.47","32.47","-86.45","1.00K"',
+    'campbell,"Hail","WYOMING",56,"C",5,"CAMPBELL","UNR","14-JUN-24 17:20:00",202406,"WRIGHT","43.93","-105.45","43.93","-105.45","0.00K"',
+    'aleutians,"Heavy Rain","ALASKA",2,"C",185,"EASTERN ALEUTIANS","AFC","02-OCT-24 06:00:00",202410,"UNALASKA","53.88","-166.53","53.88","-166.53","0.00K"',
+    'adjuntas,"Flood","PUERTO RICO",99,"C",1,"ADJUNTAS","SJU","11-SEP-24 14:00:00",202409,"ADJUNTAS","18.16","-66.72","18.16","-66.72","10.00K"',
+    'stCroix,"Flash Flood","VIRGIN ISLANDS",96,"C",10,"ST. CROIX","SJU","20-OCT-24 09:00:00",202410,"ST CROIX","17.76","-64.62","17.76","-64.62","1.00K"',
+    'guam,"Dust Devil","GUAM",98,"C",6,"GUAM","GUM","03-MAR-24 13:00:00",202403,"MANGILAO","13.46","144.80","13.46","144.80","0.20K"',
+    'marine,"Marine Thunderstorm Wind","LAKE MICHIGAN",91,"M",745,"BURN HBR TO MICHIGAN CITY IN","LOT","13-JUL-24 21:00:00",202407,"MICHIGAN CITY","41.71667","-86.9","41.71667","-86.9",',
+    'lakeMead,"High Wind","ARIZONA",4,"5",70,"LAKE MEAD - AZ SIDE","VEF","12-FEB-24 11:00:00",202402,"",,,,,"0.00K"',
+    'blank,"Drought","TEXAS",,"C",,"","","01-AUG-24 00:00:00",202408,"",,,,,',
+    'overwide,"Hail","TEXAS",123,"C",1000,"HARRIS","HGX","04-APR-24 19:00:00",202404,"HOUSTON","29.7","-95.3","29.7","-95.3","5.00K"',
+    'nonDigit,"Hail","TEXAS",4x,"C",-1,"HARRIS","HGX","04-APR-24 19:05:00",202404,"HOUSTON","29.7","-95.3","29.7","-95.3","5.00K"',
+  ];
+
+  beforeEach(() => {
+    routeFetch({ [FILE]: () => gzipResponse(`${COUNTY_HEADER}\n${COUNTY_ROWS.join('\n')}\n`) });
+  });
+
+  const searchCounties = (filters: Partial<Parameters<StormEventsService['search']>[0]> = {}) =>
+    new StormEventsService(BASE).search(
+      { ...baseQuery, year: 2024, ...filters },
+      createMockContext(),
+    );
+
+  /** The county-code keys an event carries, including any present with an undefined value. */
+  const countyCodes = (event: object | undefined) =>
+    Object.fromEntries(
+      Object.entries(event ?? {}).filter(([key]) =>
+        ['stateFips', 'czFips', 'cdoLocationId'].includes(key),
+      ),
+    );
+
+  it('projects all seven fields for the 2024 Lincoln County tornado', async () => {
+    const result = await searchCounties();
+    const lincoln = result.events.find((event) => event.eventId === '1169616');
+
+    expect(lincoln).toMatchObject({
+      stateFips: '53',
+      czFips: '043',
+      cdoLocationId: 'FIPS:53043',
+      wfo: 'OTX',
+      beginLocation: 'ROCKLYN',
+      endLatitude: 47.6506,
+      endLongitude: -118.2383,
+    });
+    // The end coordinates are their own cells, not a copy of the begin point.
+    expect(lincoln?.beginLatitude).toBe(47.6507);
+  });
+
+  it.each([
+    ['1169616', { stateFips: '53', czFips: '043', cdoLocationId: 'FIPS:53043' }],
+    ['autauga', { stateFips: '01', czFips: '001', cdoLocationId: 'FIPS:01001' }],
+    ['campbell', { stateFips: '56', czFips: '005', cdoLocationId: 'FIPS:56005' }],
+    ['lincolnZone', { stateFips: '53', czFips: '043' }],
+    ['aleutians', { stateFips: '02', czFips: '185' }],
+    ['adjuntas', { stateFips: '99', czFips: '001' }],
+    ['stCroix', { stateFips: '96', czFips: '010' }],
+    ['guam', { stateFips: '98', czFips: '006' }],
+    ['marine', { stateFips: '91', czFips: '745' }],
+    ['lakeMead', { stateFips: '04', czFips: '070' }],
+    ['blank', {}],
+    ['overwide', {}],
+    ['nonDigit', {}],
+  ])('composes the county codes of row %s as %j', async (eventId, expected) => {
+    const result = await searchCounties();
+    expect(countyCodes(result.events.find((event) => event.eventId === eventId))).toStrictEqual(
+      expected,
+    );
+  });
+
+  it('omits every location field whose cell is blank, never writing 0 or an empty string', async () => {
+    const result = await searchCounties();
+    const blank = result.events.find((event) => event.eventId === 'blank');
+    const zone = result.events.find((event) => event.eventId === 'lincolnZone');
+
+    for (const field of LOCATION_FIELDS) expect(blank).not.toHaveProperty(field);
+    for (const field of ['beginLocation', 'endLatitude', 'endLongitude', 'cdoLocationId']) {
+      expect(zone).not.toHaveProperty(field);
+    }
+    expect(zone?.wfo).toBe('OTX');
+  });
+
+  it('matches countyFips before damage accounting, totals, and paging', async () => {
+    const all = await searchCounties({ countyFips: '53043' });
+    expect(all.events.map((event) => event.eventId)).toEqual(['1169616', 'lincolnUnreported']);
+    expect(all.totalCount).toBe(2);
+
+    const second = await searchCounties({ countyFips: '53043', limit: 1, offset: 1 });
+    expect(second.events.map((event) => event.eventId)).toEqual(['lincolnUnreported']);
+    expect(second.totalCount).toBe(2);
+
+    const pastEnd = await searchCounties({ countyFips: '53043', offset: 2 });
+    expect(pastEnd.events).toEqual([]);
+    expect(pastEnd.totalCount).toBe(2);
+
+    // Five rows in the file have no damage figure; only one of them is in the county.
+    const unscoped = await searchCounties({ minDamageInUsd: 0 });
+    expect(unscoped.excludedUnknownDamage).toBe(5);
+    const scoped = await searchCounties({ countyFips: '53043', minDamageInUsd: 0 });
+    expect(scoped.events.map((event) => event.eventId)).toEqual(['1169616']);
+    expect(scoped.totalCount).toBe(1);
+    expect(scoped.excludedUnknownDamage).toBe(1);
+  });
+
+  it('keeps leading zeros significant in countyFips', async () => {
+    const result = await searchCounties({ countyFips: '01001' });
+    expect(result.events.map((event) => event.eventId)).toEqual(['autauga']);
+  });
+
+  it.each([
+    ['02185', 'an Alaska county row carrying an NWS zone number'],
+    ['99001', 'a Puerto Rico county row'],
+    ['96010', 'a Virgin Islands county row'],
+    ['98006', 'a Guam county row'],
+    ['91745', 'a marine row'],
+    ['04070', 'a CZ_TYPE 5 row'],
+  ])('matches nothing for %s, which only %s would compose', async (countyFips) => {
+    const result = await searchCounties({ countyFips });
+    expect(result.totalCount).toBe(0);
+    expect(result.events).toEqual([]);
+  });
+
+  it('ANDs countyFips with the other filters', async () => {
+    const tornado = await searchCounties({ countyFips: '53043', eventType: 'tornado' });
+    expect(tornado.events.map((event) => event.eventId)).toEqual(['1169616']);
+
+    const may = await searchCounties({ countyFips: '53043', month: 5 });
+    expect(may.events.map((event) => event.eventId)).toEqual(['lincolnUnreported']);
+
+    const contradiction = await searchCounties({ countyFips: '53043', state: 'TEXAS' });
+    expect(contradiction.totalCount).toBe(0);
+  });
+});
+
+describe('StormEventsService — the shared fixture’s location columns', () => {
+  it('projects the county and location columns on a county row', async () => {
+    const result = await new StormEventsService(BASE).search(
+      { ...baseQuery, year: 2024, eventType: 'Tornado', month: 5 },
+      createMockContext(),
+    );
+    expect(result.events[0]).toMatchObject({
+      eventId: '1182258',
+      stateFips: '48',
+      czFips: '133',
+      cdoLocationId: 'FIPS:48133',
+      wfo: 'FWD',
+      beginLocation: 'PIONEER',
+      endLatitude: 32.1654,
+      endLongitude: -99.0667,
+    });
+  });
+
+  it('keeps the codes but composes no county ID on a forecast-zone row', async () => {
+    const result = await new StormEventsService(BASE).search(
+      { ...baseQuery, year: 2024, eventType: 'Hurricane (Typhoon)' },
+      createMockContext(),
+    );
+    const helene = result.events[0];
+    expect(helene).toMatchObject({ stateFips: '12', czFips: '028', wfo: 'TAE' });
+    expect(helene).not.toHaveProperty('cdoLocationId');
+    expect(helene).not.toHaveProperty('beginLocation');
+    expect(helene).not.toHaveProperty('endLatitude');
   });
 });
 

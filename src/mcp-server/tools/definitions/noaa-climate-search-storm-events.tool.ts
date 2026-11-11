@@ -18,6 +18,17 @@ import type { StormEventsSearchResult } from '@/services/storm-events/types.js';
 /** How many candidate values a recovery notice names before it stops listing. */
 const NOTICE_SUGGESTION_LIMIT = 12;
 
+/**
+ * Five digits, optionally behind the uppercase `FIPS:` a pasted cdoLocationId
+ * carries. A case-insensitive prefix would need an `i` flag JSON Schema
+ * `pattern` cannot advertise, so the advertised and runtime grammars would part.
+ */
+const COUNTY_FIPS_PATTERN = /^\s*(?:FIPS:)?\d{5}\s*$/;
+
+/** Why a countyFips search can come back empty while the county had events. */
+const COUNTY_COVERAGE_NOTE =
+  'Only county rows (countyOrZoneType "C") outside Alaska and the territories carry county FIPS, so countyFips never matches an event NCEI filed under a forecast or marine zone; drop countyFips and filter by state to see those.';
+
 const damageSchema = z
   .object({
     raw: z
@@ -61,7 +72,7 @@ function carriesValue(values: string[], needle: string): boolean {
 export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_events', {
   title: 'Search NOAA Storm Events',
   description:
-    'Search the NCEI Storm Events Database for one calendar year — tornadoes, hail, floods, hurricanes, winter storms, heat, and every other NWS Storm Data event type, with magnitude, direct and indirect casualties, property and crop damage, and narratives. This corpus carries discrete severe-weather events rather than CDO station observations, needs no token, and publishes one bulk file per year, so year is required. Filter by episodeId from a returned event, state (full NCEI name such as "FLORIDA", not "FL"), eventType (exact NWS label such as "Tornado", "Flash Flood", or "Hurricane (Typhoon)", case-insensitive), begin month, inclusive local-calendar startDate/endDate overlap, and minDamageInUsd. Date bounds exclude missing, invalid, or reversed source spans before damage accounting, totals, and paging; cross-year bounds still search only the selected year export. Damage retains its raw magnitude-suffixed cell and parsed dollar amount; unreported figures are omitted, and minDamageInUsd discloses how many unknown figures it excluded. Events reference distinct page-local episodeNarratives by episodeNarrativeRef; eventNarrative stays on each event, and rendered narratives preserve literal source text. Optional local ISO beginDate/endDate values can feed CDO date filters; raw NCEI date-time and timezone remain available. Source row order, limit/offset pagination, and filtered totalCount are preserved; appliedDateRange echoes supplied bounds.',
+    'Search the NCEI Storm Events Database for one calendar year — tornadoes, hail, floods, hurricanes, winter storms, heat, and every other NWS Storm Data event type, with magnitude, direct and indirect casualties, property and crop damage, and narratives. This corpus carries discrete severe-weather events rather than CDO station observations, needs no token, and publishes one bulk file per year, so year is required. Filter by episodeId from a returned event, state (full NCEI name such as "FLORIDA", not "FL"), countyFips (five-digit county FIPS such as "53043", county rows only), eventType (exact NWS label such as "Tornado", "Flash Flood", or "Hurricane (Typhoon)", case-insensitive), begin month, inclusive local-calendar startDate/endDate overlap, and minDamageInUsd. County rows outside Alaska and the territories carry cdoLocationId (e.g. "FIPS:53043"), the locationId noaa_climate_find_stations and noaa_climate_fetch_data take; events also carry stateFips and czFips codes, the NWS forecast office (wfo), beginLocation, and end coordinates when NCEI filled them. Date bounds exclude missing, invalid, or reversed source spans before damage accounting, totals, and paging; cross-year bounds still search only the selected year export. Damage retains its raw magnitude-suffixed cell and parsed dollar amount; unreported figures are omitted, and minDamageInUsd discloses how many unknown figures it excluded. Events reference distinct page-local episodeNarratives by episodeNarrativeRef; eventNarrative stays on each event, and rendered narratives preserve literal source text. Optional local ISO beginDate/endDate values can feed CDO date filters; raw NCEI date-time and timezone remain available. Source row order, limit/offset pagination, and filtered totalCount are preserved; appliedDateRange echoes supplied bounds.',
   annotations: { readOnlyHint: true, openWorldHint: true },
 
   input: z.object({
@@ -82,6 +93,16 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
     state: identifierFilter(
       'Filter to this state or territory, written as the full name NCEI uses (e.g. "FLORIDA", "PUERTO RICO"), matched case-insensitively. Postal codes like "FL" match nothing. Optional.',
     ).optional(),
+    countyFips: z
+      .string()
+      .regex(
+        COUNTY_FIPS_PATTERN,
+        'County FIPS must be five digits (two-digit state, three-digit county), optionally prefixed "FIPS:".',
+      )
+      .optional()
+      .describe(
+        'Filter to one county by its five-digit Census FIPS code, state then county (e.g. "53043" for Lincoln County, WA), or by a returned cdoLocationId ("FIPS:53043"). Surrounding whitespace is trimmed; leading zeros are significant. Matches exactly the events whose cdoLocationId it names, so county rows outside Alaska and the territories only: an event NCEI filed under a forecast or marine zone never matches. Optional.',
+      ),
     eventType: searchTextFilter(
       'Filter to this NWS event type, matched case-insensitively against the exact label (e.g. "Tornado", "Hail", "Flash Flood", "Hurricane (Typhoon)"). A miss returns the labels present in that year. Optional.',
     ).optional(),
@@ -112,9 +133,9 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
         'Filter to events whose property damage parses to at least this many dollars. Excludes every row whose damage NCEI did not report — about a fifth of a recent year — since an unreported figure cannot be shown to clear the threshold. Optional.',
       ),
     limit: pageLimitSchema(100)
-      .default(50)
+      .default(10)
       .describe(
-        'Maximum events per page (1–100, default 50). Oversized positive integers are clamped to 100 with a notice; NOAA_CLAMP_LIMITS=false restores rejection above 100.',
+        'Maximum events per page (1–100, default 10). Oversized positive integers are clamped to 100 with a notice; NOAA_CLAMP_LIMITS=false restores rejection above 100.',
       ),
     offset: z
       .number()
@@ -162,12 +183,38 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
             countyOrZone: z
               .string()
               .optional()
-              .describe('County/parish or NWS forecast zone name. Omitted when not provided.'),
+              .describe(
+                'County/parish, NWS forecast zone, or marine zone name. Omitted when not provided.',
+              ),
             countyOrZoneType: z
               .string()
               .optional()
               .describe(
-                'Whether countyOrZone is a county ("C") or an NWS forecast zone ("Z"). Omitted when not provided.',
+                'What countyOrZone names: "C" county/parish, "Z" NWS forecast zone, "M" marine zone. Relayed as NCEI wrote it, so a stray value passes through unchanged. Omitted when not provided.',
+              ),
+            stateFips: z
+              .string()
+              .optional()
+              .describe(
+                'NCEI STATE_FIPS zero-padded to two digits, e.g. "53". A Census state code for the 50 states and DC; NCEI writes territories as 96–99 (Puerto Rico is 99) and marine areas as 81–95. Omitted when blank.',
+              ),
+            czFips: z
+              .string()
+              .optional()
+              .describe(
+                'NCEI CZ_FIPS zero-padded to three digits: the county code on a county row (countyOrZoneType "C"), an NWS zone number on any other row. Omitted when blank.',
+              ),
+            cdoLocationId: z
+              .string()
+              .optional()
+              .describe(
+                'CDO county location ID composed from stateFips and czFips, e.g. "FIPS:53043": pass it as locationId to noaa_climate_find_stations or noaa_climate_fetch_data, or as countyFips here. Present only on county rows in DC and every state but Alaska. Zone and marine rows, Alaska (whose county rows carry NWS zone numbers), and the territories carry none. CDO’s county catalog can lag Census changes (the export writes Oglala Lakota County, SD as 46102, which CDO still lists as Shannon County, 46113), so when it returns no stations, search stations by extent around the event coordinates.',
+              ),
+            wfo: z
+              .string()
+              .optional()
+              .describe(
+                'NWS Weather Forecast Office whose warning area the event occurred in, e.g. "OTX". Omitted when blank.',
               ),
             beginDateTime: z
               .string()
@@ -241,6 +288,12 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
               .string()
               .optional()
               .describe('Reported flood cause, e.g. "Heavy Rain". Omitted for non-flood events.'),
+            beginLocation: z
+              .string()
+              .optional()
+              .describe(
+                'The reference place, usually a town, that NWS measures the event start from. The start usually lies some distance and direction from it, so it is not the start point; beginLatitude/beginLongitude locate the start. Omitted when blank.',
+              ),
             beginLatitude: z
               .number()
               .optional()
@@ -249,6 +302,18 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
               .number()
               .optional()
               .describe('Longitude of the event start in decimal degrees. Omitted when absent.'),
+            endLatitude: z
+              .number()
+              .optional()
+              .describe(
+                'Latitude of the event end in decimal degrees: a tornado’s track end, and the begin point again on most other events. Omitted when absent.',
+              ),
+            endLongitude: z
+              .number()
+              .optional()
+              .describe(
+                'Longitude of the event end in decimal degrees: a tornado’s track end, and the begin point again on most other events. Omitted when absent.',
+              ),
             source: z
               .string()
               .optional()
@@ -370,9 +435,11 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
     );
     const notices: string[] = clampNotice ? [clampNotice] : [];
     const episodeId = input.episodeId?.trim();
+    const countyFips = input.countyFips?.trim().replace(/^FIPS:/, '');
     ctx.log.info('Searching storm events', {
       year: input.year,
       state: input.state,
+      countyFips,
       eventType: input.eventType,
       month: input.month,
     });
@@ -382,6 +449,7 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
         year: input.year,
         ...(episodeId && { episodeId }),
         ...(input.state !== undefined && { state: input.state }),
+        ...(countyFips !== undefined && { countyFips }),
         ...(input.eventType !== undefined && { eventType: input.eventType }),
         ...(input.month !== undefined && { month: input.month }),
         ...(input.startDate !== undefined && { startDate: input.startDate }),
@@ -405,9 +473,9 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
         `Page is empty because offset ${input.offset} is past the end of ${result.totalCount} matching events in ${input.year}. Lower offset or reset it to 0.`,
       );
     } else if (result.totalCount === 0) {
-      notices.push(emptyNotice({ ...input, episodeId }, result));
+      notices.push(emptyNotice({ ...input, episodeId, countyFips }, result));
     } else if (result.totalCount > input.offset + result.events.length) {
-      const guidance = `Showing events ${input.offset + 1}–${input.offset + result.events.length} of ${result.totalCount} matches in ${input.year}. Raise offset to page forward, or narrow with state, eventType, month, startDate, endDate, or minDamageInUsd.`;
+      const guidance = `Showing events ${input.offset + 1}–${input.offset + result.events.length} of ${result.totalCount} matches in ${input.year}. Raise offset to page forward, or narrow with state, countyFips, eventType, month, startDate, endDate, or minDamageInUsd.`;
       ctx.enrich.truncated({
         shown: result.events.length,
         cap: limit,
@@ -466,7 +534,11 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       const area: string[] = [];
       if (event.countyOrZone) area.push(event.countyOrZone);
       if (event.countyOrZoneType) area.push(`area type ${event.countyOrZoneType}`);
+      if (event.stateFips) area.push(`stateFips ${event.stateFips}`);
+      if (event.czFips) area.push(`czFips ${event.czFips}`);
+      if (event.cdoLocationId) area.push(`cdoLocationId ${event.cdoLocationId}`);
       if (area.length > 0) lines.push(`**Area:** ${area.join(' | ')}`);
+      if (event.wfo) lines.push(`**WFO:** ${event.wfo}`);
 
       const when = [`**When:** ${event.beginDateTime}`];
       if (event.endDateTime) when.push(`– ${event.endDateTime}`);
@@ -493,9 +565,15 @@ export const noaaClimateSearchStormEvents = tool('noaa_climate_search_storm_even
       lines.push(`**Crop damage:** ${renderDamage(event.damageCrops)}`);
 
       if (event.floodCause) lines.push(`**Flood cause:** ${event.floodCause}`);
+      if (event.beginLocation) lines.push(`**Begin reference place:** ${event.beginLocation}`);
       if (event.beginLatitude !== undefined || event.beginLongitude !== undefined) {
         lines.push(
           `**Begin coords:** ${event.beginLatitude ?? 'unknown'}, ${event.beginLongitude ?? 'unknown'}`,
+        );
+      }
+      if (event.endLatitude !== undefined || event.endLongitude !== undefined) {
+        lines.push(
+          `**End coords:** ${event.endLatitude ?? 'unknown'}, ${event.endLongitude ?? 'unknown'}`,
         );
       }
       if (event.source) lines.push(`**Reported by:** ${event.source}`);
@@ -545,6 +623,7 @@ function emptyNotice(
     year: number;
     episodeId?: string | undefined;
     state?: string | undefined;
+    countyFips?: string | undefined;
     eventType?: string | undefined;
     month?: number | undefined;
     startDate?: string | undefined;
@@ -559,6 +638,7 @@ function emptyNotice(
   const applied: string[] = [];
   if (input.episodeId) applied.push(`episodeId="${input.episodeId}"`);
   if (input.state) applied.push(`state="${input.state}"`);
+  if (input.countyFips) applied.push(`countyFips="${input.countyFips}"`);
   if (input.eventType) applied.push(`eventType="${input.eventType}"`);
   if (input.month !== undefined) applied.push(`month=${input.month}`);
   if (input.startDate !== undefined) applied.push(`startDate="${input.startDate}"`);
@@ -605,6 +685,7 @@ function emptyNotice(
 
     const narrowing: string[] = [];
     if (input.episodeId) narrowing.push(`episodeId="${input.episodeId}"`);
+    if (input.countyFips) narrowing.push(`countyFips="${input.countyFips}"`);
     if (input.month !== undefined) narrowing.push(`month=${input.month}`);
     if (input.startDate !== undefined) narrowing.push(`startDate="${input.startDate}"`);
     if (input.endDate !== undefined) narrowing.push(`endDate="${input.endDate}"`);
@@ -621,6 +702,8 @@ function emptyNotice(
       );
     }
   }
+
+  if (input.countyFips) parts.push(COUNTY_COVERAGE_NOTE);
 
   if (input.minDamageInUsd !== undefined && result.excludedUnknownDamage > 0) {
     parts.push(

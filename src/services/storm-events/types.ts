@@ -25,6 +25,16 @@ export type StormEvent = {
   state: string;
   countyOrZone?: string;
   countyOrZoneType?: string;
+  /** `STATE_FIPS` zero-padded to two digits. NCEI writes territories as 96–99 and marine areas as 81–95. */
+  stateFips?: string;
+  /** `CZ_FIPS` zero-padded to three digits: a county code on `C` rows, an NWS zone number otherwise. */
+  czFips?: string;
+  /** CDO county location ID (`FIPS:` + stateFips + czFips), present only where it names a Census county. */
+  cdoLocationId?: string;
+  /** NWS Weather Forecast Office identifier. */
+  wfo?: string;
+  /** The reference place NWS measures the event start from, not the start point itself. */
+  beginLocation?: string;
   beginDateTime: string;
   beginDate?: string;
   endDate?: string;
@@ -44,6 +54,8 @@ export type StormEvent = {
   floodCause?: string;
   beginLatitude?: number;
   beginLongitude?: number;
+  endLatitude?: number;
+  endLongitude?: number;
   source?: string;
   episodeNarrative?: string;
   eventNarrative?: string;
@@ -61,6 +73,8 @@ export type StormEventsQuery = {
   eventType?: string;
   /** Calendar month of the event's begin date (1–12). */
   month?: number;
+  /** Five-digit county FIPS, leading zeros intact; matches rows whose `cdoLocationId` is `FIPS:<countyFips>`. */
+  countyFips?: string;
   /** Inclusive local-calendar overlap bounds within the selected year's export. */
   startDate?: string;
   endDate?: string;

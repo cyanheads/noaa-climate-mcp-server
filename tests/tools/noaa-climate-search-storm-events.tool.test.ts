@@ -70,6 +70,26 @@ const sparse: StormEvent = {
   beginDateTime: '30-APR-24 20:33:00',
 };
 
+/** Event 1169616, the 2024 Lincoln County, WA tornado, with every county and location field. */
+const lincoln: StormEvent = {
+  eventId: '1169616',
+  episodeId: '190042',
+  eventType: 'Tornado',
+  state: 'WASHINGTON',
+  countyOrZone: 'LINCOLN',
+  countyOrZoneType: 'C',
+  stateFips: '53',
+  czFips: '043',
+  cdoLocationId: 'FIPS:53043',
+  wfo: 'OTX',
+  beginDateTime: '26-MAR-24 16:45:00',
+  beginLocation: 'ROCKLYN',
+  beginLatitude: 47.6507,
+  beginLongitude: -118.2383,
+  endLatitude: 47.6506,
+  endLongitude: -118.2383,
+};
+
 function searchResult(overrides: Partial<StormEventsSearchResult> = {}): StormEventsSearchResult {
   return {
     events: [helene, tornado, sparse],
@@ -229,6 +249,55 @@ describe('noaaClimateSearchStormEvents — input contract', () => {
     expect(search.mock.calls[0]?.[0].episodeId).toBe('00123');
   });
 
+  it('advertises the countyFips format', () => {
+    expect(z.toJSONSchema(noaaClimateSearchStormEvents.input).properties?.countyFips).toMatchObject(
+      {
+        type: 'string',
+        pattern: '^\\s*(?:FIPS:)?\\d{5}\\s*$',
+      },
+    );
+  });
+
+  it.each([
+    ['53043', '53043'],
+    [' 53043 ', '53043'],
+    ['FIPS:53043', '53043'],
+    ['\ufeff FIPS:53043\u2029', '53043'],
+    ['01001', '01001'],
+  ])('forwards countyFips %j to the service as the five digits %s', async (countyFips, digits) => {
+    await run({ year: 2024, countyFips });
+    expect(search.mock.calls[0]?.[0]).toEqual({
+      year: 2024,
+      countyFips: digits,
+      limit: 10,
+      offset: 0,
+    });
+  });
+
+  it.each([
+    '',
+    '   ',
+    '1001',
+    '530430',
+    '5304a',
+    'fips:53043',
+    'FIPS: 53043',
+    'FIPS:53043:1',
+    '53 043',
+  ])('rejects countyFips %j at argument parsing, before the service', async (countyFips) => {
+    // The value fails the field's own format check, not the strict root's unknown-key check.
+    const parsed = noaaClimateSearchStormEvents.input.safeParse({ year: 2024, countyFips });
+    expect(parsed.error?.issues.map(({ path, code }) => ({ path, code }))).toEqual([
+      { path: ['countyFips'], code: 'invalid_format' },
+    ]);
+    const failure = await contractFailure(noaaClimateSearchStormEvents, { year: 2024, countyFips });
+    expect(failure.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(failure.data.reason).toBe('invalid_arguments');
+    expect(failure.text).toContain('countyFips');
+    expect(failure.text).toContain('five digits');
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it('forwards and renders the inclusive interval on both surfaces', async () => {
     const { result } = await run({ year: 2024, startDate: '2024-09-24', endDate: '2024-09-29' });
     expect(search.mock.calls[0]?.[0]).toMatchObject({
@@ -350,17 +419,20 @@ describe('noaaClimateSearchStormEvents — input contract', () => {
     );
   });
 
-  it('defaults limit to 50 and offset to 0', () => {
+  it('defaults limit to 10 and offset to 0', () => {
     const parsed = noaaClimateSearchStormEvents.input.parse({ year: 2024 });
-    expect(parsed.limit).toBe(50);
+    expect(parsed.limit).toBe(10);
     expect(parsed.offset).toBe(0);
+    expect(z.toJSONSchema(noaaClimateSearchStormEvents.input).properties?.limit).toMatchObject({
+      default: 10,
+    });
   });
 
   it('forwards only the filters the caller supplied', async () => {
     await run({ year: 2024, state: 'TEXAS' });
 
     expect(search).toHaveBeenCalledWith(
-      { year: 2024, state: 'TEXAS', limit: 50, offset: 0 },
+      { year: 2024, state: 'TEXAS', limit: 10, offset: 0 },
       expect.anything(),
     );
   });
@@ -371,8 +443,9 @@ describe('noaaClimateSearchStormEvents — input contract', () => {
       state: 'TEXAS',
       eventType: 'Tornado',
       month: 5,
+      countyFips: 'FIPS:48133',
       minDamageInUsd: 1000,
-      limit: 10,
+      limit: 7,
       offset: 20,
     });
 
@@ -382,8 +455,9 @@ describe('noaaClimateSearchStormEvents — input contract', () => {
         state: 'TEXAS',
         eventType: 'Tornado',
         month: 5,
+        countyFips: '48133',
         minDamageInUsd: 1000,
-        limit: 10,
+        limit: 7,
         offset: 20,
       },
       expect.anything(),
@@ -431,7 +505,7 @@ describe('noaaClimateSearchStormEvents — structuredContent', () => {
       await run({ year: 2024, episodeId });
       expect(search.mock.calls[0]?.[0]).toEqual({
         year: 2024,
-        limit: 50,
+        limit: 10,
         offset: 0,
         ...(episodeId.trim() ? { episodeId: episodeId.trim() } : {}),
       });
@@ -648,6 +722,151 @@ describe('noaaClimateSearchStormEvents — empty-result guidance', () => {
   });
 });
 
+describe('noaaClimateSearchStormEvents — county and location fields', () => {
+  const callText = (response: Awaited<ReturnType<typeof runToolContract>>) =>
+    response.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
+
+  it('carries county FIPS, WFO, begin reference place, and end coordinates on both surfaces', async () => {
+    mockSearch(searchResult({ events: [lincoln], totalCount: 1 }));
+    const response = await runToolContract(noaaClimateSearchStormEvents, {
+      year: 2024,
+      countyFips: '53043',
+    });
+
+    expect(response.isError).not.toBe(true);
+    const [event] = noaaClimateSearchStormEvents.output.parse(response.structuredContent).events;
+    expect(event).toMatchObject({
+      stateFips: '53',
+      czFips: '043',
+      cdoLocationId: 'FIPS:53043',
+      wfo: 'OTX',
+      beginLocation: 'ROCKLYN',
+      endLatitude: 47.6506,
+      endLongitude: -118.2383,
+    });
+
+    const lines = callText(response).split('\n');
+    expect(lines).toContain(
+      '**Area:** LINCOLN | area type C | stateFips 53 | czFips 043 | cdoLocationId FIPS:53043',
+    );
+    expect(lines).toContain('**WFO:** OTX');
+    expect(lines).toContain('**Begin reference place:** ROCKLYN');
+    expect(lines).toContain('**Begin coords:** 47.6507, -118.2383');
+    expect(lines).toContain('**End coords:** 47.6506, -118.2383');
+  });
+
+  it('renders the county ID and place names so a CommonMark parse reads them back unchanged', () => {
+    const event = {
+      ...lincoln,
+      countyOrZone: 'FLORIDA A&M UNIVERSITY (FAMU)',
+      beginLocation: 'C & S WELD COUNTY',
+    };
+    const html = marked.parse(
+      firstText(
+        noaaClimateSearchStormEvents.format!({
+          year: 2024,
+          sourceFile: SOURCE_FILE,
+          events: [event],
+          episodeNarratives: [],
+        }),
+      ),
+      { gfm: false, async: false },
+    );
+    expect(html).toContain('cdoLocationId FIPS:53043');
+    expect(html).toContain('FLORIDA A&amp;M UNIVERSITY (FAMU) | area type C');
+    expect(html).toContain('<strong>Begin reference place:</strong> C &amp; S WELD COUNTY');
+  });
+
+  it('renders an end coordinate pair with one side missing as unknown, like the begin pair', () => {
+    const { endLongitude: _dropped, ...oneSided } = lincoln;
+    const text = firstText(
+      noaaClimateSearchStormEvents.format!({
+        year: 2024,
+        sourceFile: SOURCE_FILE,
+        events: [oneSided],
+        episodeNarratives: [],
+      }),
+    );
+    expect(text.split('\n')).toContain('**End coords:** 47.6506, unknown');
+  });
+
+  it('renders none of the new labels for a row that carries none of the fields', () => {
+    const text = firstText(
+      noaaClimateSearchStormEvents.format!({
+        year: 2024,
+        sourceFile: SOURCE_FILE,
+        events: [sparse],
+        episodeNarratives: [],
+      }),
+    );
+    for (const label of [
+      'stateFips',
+      'czFips',
+      'cdoLocationId',
+      'WFO',
+      'Begin reference',
+      'End coords',
+    ]) {
+      expect(text).not.toContain(label);
+    }
+  });
+
+  it('keeps the codes and drops the county ID on a zone row, on both surfaces', async () => {
+    const zone: StormEvent = { ...helene, stateFips: '12', czFips: '028', wfo: 'TAE' };
+    mockSearch(searchResult({ events: [zone], totalCount: 1 }));
+    const response = await runToolContract(noaaClimateSearchStormEvents, { year: 2024 });
+
+    const [event] = noaaClimateSearchStormEvents.output.parse(response.structuredContent).events;
+    expect(event).toMatchObject({ stateFips: '12', czFips: '028', wfo: 'TAE' });
+    expect(event).not.toHaveProperty('cdoLocationId');
+    const text = callText(response);
+    expect(text.split('\n')).toContain(
+      '**Area:** INLAND TAYLOR | area type Z | stateFips 12 | czFips 028',
+    );
+    expect(text).not.toContain('cdoLocationId');
+  });
+
+  it('echoes countyFips and says which rows carry county FIPS when nothing matched, on both surfaces', async () => {
+    mockSearch(searchResult({ events: [], totalCount: 0 }));
+    const response = await runToolContract(noaaClimateSearchStormEvents, {
+      year: 2024,
+      countyFips: ' FIPS:02185 ',
+    });
+
+    expect(search.mock.calls[0]?.[0].countyFips).toBe('02185');
+    const notice = (response.structuredContent as { notice?: string }).notice ?? '';
+    expect(notice).toContain('countyFips="02185"');
+    expect(notice).toContain(
+      'Only county rows (countyOrZoneType "C") outside Alaska and the territories carry county FIPS',
+    );
+    expect(callText(response)).toContain('outside Alaska and the territories carry county FIPS');
+  });
+
+  it('names countyFips as the filter that emptied the page when the other values occur', async () => {
+    mockSearch(searchResult({ events: [], totalCount: 0 }));
+    const { ctx } = await run({ year: 2024, eventType: 'Tornado', countyFips: '53043' });
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain(
+      'eventType="Tornado" occurs in 2024, so countyFips="53043" left nothing',
+    );
+  });
+
+  it('adds no county coverage note when countyFips was not supplied', async () => {
+    mockSearch(searchResult({ events: [], totalCount: 0 }));
+    const { ctx } = await run({ year: 2024, month: 3 });
+
+    expect(getEnrichment(ctx).notice as string).not.toContain('county FIPS');
+  });
+
+  it('offers countyFips among the narrowing filters when matches run past the page', async () => {
+    mockSearch(searchResult({ totalCount: 149 }));
+    const { ctx } = await run({ year: 2024, limit: 3 });
+
+    expect(getEnrichment(ctx).notice as string).toContain('countyFips');
+  });
+});
+
 describe('noaaClimateSearchStormEvents — an H-magnitude damage figure', () => {
   const hundreds: StormEvent = {
     eventId: '10123456',
@@ -745,6 +964,8 @@ describe('noaaClimateSearchStormEvents — format()', () => {
     expect(text).toContain('195637');
     expect(text).toContain('INLAND TAYLOR');
     expect(text).toContain('area type Z');
+    // A row carrying no county codes keeps the area line it always had.
+    expect(text.split('\n')).toContain('**Area:** INLAND TAYLOR | area type Z');
     expect(text).toContain('26-SEP-24 16:00:00');
     expect(text).toContain('27-SEP-24 04:00:00');
     expect(text).toContain('EST-5');

@@ -50,10 +50,11 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_CACHED_YEARS = 2;
 
 /**
- * Filenames carry a publish date that is not a function of the year — 2024 and
- * 2025 sit at `_c20260728` while 2023 is `_c20260323` — so the listing is the
- * only way to name a file. Matched globally: the Apache index repeats each entry
- * in the link href and its text.
+ * Filenames carry a publish date that is not a function of the year — it is
+ * whenever NCEI last republished that year, so neighboring years carry
+ * different suffixes and any year's suffix moves on its next republish — so the
+ * listing is the only way to name a file. Matched globally: the Apache index
+ * repeats each entry in the link href and its text.
  */
 const DETAILS_FILE_PATTERN = /StormEvents_details-ftp_v1\.0_d(\d{4})_c(\d{8})\.csv\.gz/g;
 
@@ -95,6 +96,45 @@ function toNumber(value: string | undefined): number | undefined {
 function toText(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+/**
+ * Parse an unpadded integer code cell of at most `width` digits and zero-pad it;
+ * any other cell is absent. NCEI writes `STATE_FIPS` and `CZ_FIPS` without
+ * leading zeros (`1` for Alabama, `43` for Lincoln County, WA).
+ */
+function toFipsCode(value: string, width: number): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > width || !/^\d+$/.test(trimmed)) return undefined;
+  return trimmed.padStart(width, '0');
+}
+
+type CellReader = (name: string) => string;
+
+type CountyCodes = Pick<StormEvent, 'stateFips' | 'czFips' | 'cdoLocationId'>;
+
+/**
+ * A row's padded codes and the CDO county location ID they compose.
+ *
+ * The ID is composed only where the codes name a Census county: a `C` row with
+ * a state code in 01–56 other than Alaska's 02. Alaska's `C` rows carry NWS zone
+ * numbers — some compose a different real borough (`185 EASTERN ALEUTIANS`
+ * would name North Slope) — and NCEI writes territories as 96–99, not their
+ * Census codes. Zone and marine rows carry zone numbers. The `countyFips` filter
+ * and the projection both read this one composition, so the filter matches
+ * exactly the rows that carry the ID.
+ */
+function countyCodes(cell: CellReader): CountyCodes {
+  const stateFips = toFipsCode(cell('STATE_FIPS'), 2);
+  const czFips = toFipsCode(cell('CZ_FIPS'), 3);
+  const state = Number(stateFips);
+  const inCensusRange = state >= 1 && state <= 56 && state !== 2;
+  const isCensusCounty = cell('CZ_TYPE').trim() === 'C' && czFips !== undefined && inCensusRange;
+  return {
+    ...(stateFips && { stateFips }),
+    ...(czFips && { czFips }),
+    ...(isCensusCounty && { cdoLocationId: `FIPS:${stateFips}${czFips}` }),
+  };
 }
 
 export class StormEventsService {
@@ -144,6 +184,7 @@ export class StormEventsService {
     const stateNeedle = query.state?.trim().toLowerCase();
     const eventTypeNeedle = query.eventType?.trim().toLowerCase();
     const episodeNeedle = query.episodeId?.trim();
+    const countyNeedle = query.countyFips === undefined ? undefined : `FIPS:${query.countyFips}`;
 
     const events: StormEvent[] = [];
     const eventTypesInYear = new Set<string>();
@@ -173,6 +214,8 @@ export class StormEventsService {
       if (stateNeedle !== undefined && state.toLowerCase() !== stateNeedle) return;
       if (eventTypeNeedle !== undefined && eventType.toLowerCase() !== eventTypeNeedle) return;
       if (episodeNeedle && cell('EPISODE_ID') !== episodeNeedle) return;
+      // Ahead of the damage block, so excludedUnknownDamage counts only this county.
+      if (countyNeedle !== undefined && countyCodes(cell).cdoLocationId !== countyNeedle) return;
       if (
         query.month !== undefined &&
         Number(cell('BEGIN_YEARMONTH').slice(4, 6)) !== query.month
@@ -440,13 +483,15 @@ function indexHeader(record: string[], sourceFile: string): Map<string, number> 
 
 /** Build the surfaced event from one row, omitting every cell NCEI left blank. */
 function projectEvent(
-  cell: (name: string) => string,
+  cell: CellReader,
   damageProperty: ReturnType<typeof parseDamageEstimate>,
 ): StormEvent {
   const damageCrops = parseDamageEstimate(cell('DAMAGE_CROPS'));
   const episodeId = toText(cell('EPISODE_ID'));
   const countyOrZone = toText(cell('CZ_NAME'));
   const countyOrZoneType = toText(cell('CZ_TYPE'));
+  const wfo = toText(cell('WFO'));
+  const beginLocation = toText(cell('BEGIN_LOCATION'));
   const endDateTime = toText(cell('END_DATE_TIME'));
   const beginDate = localCalendarDate(cell('BEGIN_YEARMONTH'), cell('BEGIN_DAY'));
   const endDate = localCalendarDate(cell('END_YEARMONTH'), cell('END_DAY'));
@@ -463,6 +508,8 @@ function projectEvent(
   const floodCause = toText(cell('FLOOD_CAUSE'));
   const beginLatitude = toNumber(cell('BEGIN_LAT'));
   const beginLongitude = toNumber(cell('BEGIN_LON'));
+  const endLatitude = toNumber(cell('END_LAT'));
+  const endLongitude = toNumber(cell('END_LON'));
   const source = toText(cell('SOURCE'));
   const episodeNarrative = toText(cell('EPISODE_NARRATIVE'));
   const eventNarrative = toText(cell('EVENT_NARRATIVE'));
@@ -477,6 +524,8 @@ function projectEvent(
     ...(episodeId && { episodeId }),
     ...(countyOrZone && { countyOrZone }),
     ...(countyOrZoneType && { countyOrZoneType }),
+    ...countyCodes(cell),
+    ...(wfo && { wfo }),
     ...(endDateTime && { endDateTime }),
     ...(timezone && { timezone }),
     ...(magnitude !== undefined && { magnitude }),
@@ -491,8 +540,11 @@ function projectEvent(
     ...(damageProperty && { damageProperty }),
     ...(damageCrops && { damageCrops }),
     ...(floodCause && { floodCause }),
+    ...(beginLocation && { beginLocation }),
     ...(beginLatitude !== undefined && { beginLatitude }),
     ...(beginLongitude !== undefined && { beginLongitude }),
+    ...(endLatitude !== undefined && { endLatitude }),
+    ...(endLongitude !== undefined && { endLongitude }),
     ...(source && { source }),
     ...(episodeNarrative && { episodeNarrative }),
     ...(eventNarrative && { eventNarrative }),
