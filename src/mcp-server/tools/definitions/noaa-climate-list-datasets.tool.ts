@@ -24,7 +24,7 @@ import { type CollectionTotal, resolveCollectionTotal } from '@/services/cdo/pag
 export const noaaClimateListDatasets = tool('noaa_climate_list_datasets', {
   title: 'List NOAA Climate Datasets',
   description:
-    'List available NOAA CDO datasets with their IDs, names, and temporal coverage. Returns all ~11 datasets by default (no required parameters). Optionally filter to datasets that contain a specific data type, cover a location or station, or overlap a date range. Common datasets: GHCND (daily observations, 1763–present), GSOM (monthly summaries), GSOY (annual summaries), NORMAL_DLY/MLY/ANN/HLY (1981–2010 climate normals). Use this first to discover available datasets before calling noaa_climate_fetch_data.',
+    'List available NOAA CDO datasets with their IDs, names, and temporal coverage. Returns all ~11 datasets by default (no required parameters). Optionally filter to datasets that contain a specific data type, cover a location or station, or overlap a date range. Common datasets: GHCND (daily observations, 1763–present), GSOM (monthly summaries), GSOY (annual summaries), NORMAL_DLY/MLY/ANN/HLY (the superseded 1981–2010 normals; noaa_climate_get_normals serves the current 1991–2020 normals). Use this first to discover available datasets before calling noaa_climate_fetch_data.',
   annotations: { readOnlyHint: true, openWorldHint: false },
   input: z.object({
     datatypeId: identifierArrayFilter(

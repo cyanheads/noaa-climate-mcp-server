@@ -33,7 +33,8 @@ function rawUnitsNotice(datasetId: string): string {
   else if (id === 'GSOM' || id === 'GSOY')
     examples = 'temperature and precipitation examples use °C and mm';
   else if (id.startsWith('NORMAL_'))
-    examples = 'temperature normals use tenths °F and precipitation normals hundredths inches';
+    examples =
+      'temperature normals use tenths °F, degree days whole °F-days, and precipitation normals hundredths inches';
   else if (id === 'PRECIP_HLY') examples = 'HPCP uses hundredths inches';
   else if (id === 'PRECIP_15') examples = 'QPCP uses hundredths inches';
   else examples = 'radar values follow the selected product documentation';
@@ -41,6 +42,124 @@ function rawUnitsNotice(datasetId: string): string {
     ? 'https://www.ncei.noaa.gov/products/radar/next-generation-weather-radar'
     : `https://www.ncei.noaa.gov/pub/data/cdo/documentation/${id}_documentation.pdf`;
   return `Units omitted: ${id} values are raw; units and scale depend on datatype. Examples: ${examples}. These are examples, not complete unit metadata or conversion rules for wind, direction, counts, or percentages. Request units=metric or units=standard for conversion. NOAA documentation: ${documentation}`;
+}
+
+/**
+ * Per dataset, the NORMAL_* datatype endings CDO converts like temperatures
+ * under units=metric, subtracting 32 before scaling, though each is a
+ * degree-day sum, a temperature range, or a standard deviation that only
+ * scales. Every datatype of NORMAL_MLY, NORMAL_ANN, and NORMAL_DLY was compared
+ * across units=metric, units=standard, and units omitted at GHCND:USW00023183
+ * (April) and GHCND:USW00014922 (October); January at GHCND:USW00024233 agrees.
+ *
+ * - NORMAL_MLY and NORMAL_ANN offset the base-65 degree days and the
+ *   thresholded growing degree days: MLY-GRDD-TB4886 is 695 °F-days raw and
+ *   reads 368, where 695 × 5/9 is 386, and January MLY-HTDD-NORMAL 711 reads
+ *   377. They offset the diurnal ranges (seasonal DJF-DUTR-NORMAL included),
+ *   and NORMAL_MLY its standard deviations; NORMAL_ANN carries none.
+ * - NORMAL_DLY offsets only its ranges and standard deviations (DLY-DUTR-NORMAL
+ *   25.1 °F reads −3.8). Its degree days scale correctly: DLY-HTDD-NORMAL 16
+ *   reads 9, DLY-GRDD-TB4886 23 reads 13.
+ * - Base-specific degree days (MLY-HTDD-BASE60), base-only growing degree days
+ *   (MLY-GRDD-BASE50), NORMAL_HLY degree hours, and GSOM's HTDD/CLDD only
+ *   scale, so no dataset matches them.
+ *
+ * The raw values are the recovery the notice gives: degree days are whole
+ * °F-days, and ranges and standard deviations tenths °F (raw DUTR equals raw
+ * TMAX − TMIN on all three datasets). units=standard is not one: it leaves the
+ * seasonal ranges unscaled (DJF-DUTR-NORMAL 157 raw and 157 standard, where the
+ * range is 15.7 °F).
+ */
+const METRIC_OFFSET_ENDINGS = new Map<string, readonly string[]>([
+  [
+    'NORMAL_MLY',
+    ['-HTDD-NORMAL', '-CLDD-NORMAL', '-GRDD-TB4886', '-GRDD-TB5086', '-DUTR-NORMAL', '-STDDEV'],
+  ],
+  ['NORMAL_ANN', ['-HTDD-NORMAL', '-CLDD-NORMAL', '-GRDD-TB4886', '-GRDD-TB5086', '-DUTR-NORMAL']],
+  ['NORMAL_DLY', ['-DUTR-NORMAL', '-STDDEV']],
+]);
+
+/**
+ * NCEI's special values for the 1981–2010 normals, as the CDO NORMAL_MLY,
+ * NORMAL_DLY, NORMAL_HLY, and NORMAL_ANN documentation defines them
+ * (https://www.ncei.noaa.gov/pub/data/cdo/documentation/NORMAL_MLY_documentation.pdf).
+ */
+const NORMALS_SPECIAL_VALUES = new Map([
+  [-9999, 'missing or insufficient data'],
+  [-7777, 'a non-zero value that would round to zero'],
+  [-6666, 'parameter undefined: too few occurrences to compute'],
+  [-4444, 'year-round risk of frost-freeze'],
+]);
+
+/**
+ * Each special value as CDO prints it with units omitted or units=standard,
+ * keyed to its code. Omitted units return the code itself; units=standard
+ * scales it with the datatype, so the whole-degree-day MLY-CLDD-NORMAL keeps
+ * -7777 while the tenths-of-days MLY-TMIN-AVGNDS-LSTH032 reads -777.7. The
+ * hundredths form follows the same scaling and was not seen live. Division is
+ * correctly rounded, so `-7777 / 10` is the same double as a parsed -777.7. No
+ * real normal prints any of these: temperatures carry one decimal and stay
+ * above −100 °F, and the hundredths-scaled precipitation is never negative.
+ */
+const SPECIAL_VALUE_CODES = new Map(
+  [...NORMALS_SPECIAL_VALUES.keys()].flatMap((code) =>
+    [code, code / 10, code / 100].map((printed) => [printed, code] as const),
+  ),
+);
+
+/**
+ * Under units=metric CDO converts a special value like a measurement
+ * (MLY-CLDD-NORMAL -7777 reads -4338, the temperature offset applied), so its
+ * code cannot be recovered. No metric normal reads near this: temperatures stay
+ * above −60 °C, and every other element stays above −18 even where CDO applies
+ * the temperature offset by mistake. A code on a datatype CDO leaves
+ * unconverted falls below the ceiling too (the tenths-of-days counts read
+ * -777.7); only a hundredths-scaled one (-99.99 … -44.44) would sit above it, so
+ * those still match {@link SPECIAL_VALUE_CODES}. None was seen live.
+ */
+const METRIC_SPECIAL_VALUE_CEILING = -100;
+
+/** Page-local notice naming the NORMAL_* datatypes that carry an NCEI special value. */
+function specialValuesNotice(
+  records: readonly { datatype: string; value?: number }[],
+  units: 'metric' | 'standard' | undefined,
+): string | undefined {
+  if (units === 'metric') {
+    const datatypes = new Set(
+      records
+        .filter(
+          ({ value }) =>
+            value !== undefined &&
+            (value < METRIC_SPECIAL_VALUE_CEILING || SPECIAL_VALUE_CODES.has(value)),
+        )
+        .map((rec) => rec.datatype),
+    );
+    if (datatypes.size === 0) return;
+    const codes = [...NORMALS_SPECIAL_VALUES]
+      .map(([code, meaning]) => `${code} ${meaning}`)
+      .join('; ');
+    return `${[...datatypes].join(', ')} carry values on this page far below any normal's range: NCEI special-value codes (${codes}) that CDO converted under units=metric, so the number is not a measurement either. Values are kept as CDO returned them; omit units to read the codes.`;
+  }
+  const byCode = new Map<number, Map<string, number>>();
+  for (const { datatype, value } of records) {
+    if (value === undefined) continue;
+    const code = SPECIAL_VALUE_CODES.get(value);
+    if (code === undefined) continue;
+    const printed = byCode.get(code) ?? new Map<string, number>();
+    printed.set(datatype, value);
+    byCode.set(code, printed);
+  }
+  if (byCode.size === 0) return;
+  const groups = [...byCode].map(([code, printed]) => {
+    const names = [...printed].map(([datatype, value]) =>
+      value === code ? datatype : `${datatype} as ${value}`,
+    );
+    return `${code} (${NORMALS_SPECIAL_VALUES.get(code)}) in ${names.join(', ')}`;
+  });
+  const scaled = [...byCode].some(([code, printed]) =>
+    [...printed.values()].some((value) => value !== code),
+  );
+  return `NCEI special values on this page are codes, not measurements, and are kept as CDO returned them: ${groups.join('; ')}.${scaled ? ' Under units=standard CDO scales a code with its datatype.' : ''}`;
 }
 
 /** Sub-daily and daily datasets. */
@@ -127,14 +246,14 @@ function daysBetween(start: string, end: string): number {
 export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
   title: 'Fetch NOAA Climate Observation Data',
   description:
-    'Fetch historical observation records from a NOAA CDO dataset for a given date range. Requires datasetId, startDate, and endDate; optionally filter stations, locations, and datatypes. The encoded query is limited to 4000 characters; reduce filters and make separate calls if exceeded. Sub-daily, daily, and radar datasets allow 1 year; GSOM/GSOY/NORMAL_MLY/NORMAL_ANN allow 10 years, through the end of the corresponding calendar month. For NORMAL_* use the API proxy year 2010. Request units=metric or units=standard: omitted units retain datatype-specific raw scales. Examples: GHCND TMAX/TMIN tenths °C, PRCP tenths mm, SNOW/SNWD whole mm; GSOM/GSOY temperature/precipitation °C/mm; NORMAL_* temperature normals tenths °F and precipitation normals hundredths inches; PRECIP_HLY/HPCP and PRECIP_15/QPCP hundredths inches. These examples are not universal conversion rules. Missing precipitation rows omit value and carry missing=true; GHCND flags expose quality-check failures without dropping values.',
+    'Fetch historical observation records from a NOAA CDO dataset for a given date range. Requires datasetId, startDate, and endDate; optionally filter stations, locations, and datatypes. The encoded query is limited to 4000 characters; reduce filters and make separate calls if exceeded. Sub-daily, daily, and radar datasets allow 1 year; GSOM/GSOY/NORMAL_MLY/NORMAL_ANN allow 10 years, through the end of the corresponding calendar month. NORMAL_* datasets are the superseded 1981–2010 normals, dated in the API proxy year 2010; for the current 1991–2020 normals use noaa_climate_get_normals. Request units=metric or units=standard: omitted units retain datatype-specific raw scales. Examples: GHCND TMAX/TMIN tenths °C, PRCP tenths mm, SNOW/SNWD whole mm; GSOM/GSOY temperature/precipitation °C/mm; NORMAL_* temperature normals tenths °F and precipitation normals hundredths inches; PRECIP_HLY/HPCP and PRECIP_15/QPCP hundredths inches. These examples are not universal conversion rules. Missing precipitation rows omit value and carry missing=true; GHCND flags expose quality-check failures without dropping values.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     datasetId: identifierFilter(
-      'Dataset ID to query (e.g., GHCND for daily data, GSOM for monthly, GSOY for annual, NORMAL_DLY/MLY/ANN/HLY for 1981–2010 climate normals, NEXRAD2/NEXRAD3 for weather radar). Determines date range limit: GHCND/PRECIP_*/NORMAL_DLY/NORMAL_HLY/NEXRAD2/NEXRAD3 allow 1-year max per request; GSOM/GSOY/NORMAL_MLY/NORMAL_ANN allow 10-year max.',
+      'Dataset ID to query (e.g., GHCND for daily data, GSOM for monthly, GSOY for annual, NORMAL_DLY/MLY/ANN/HLY for the superseded 1981–2010 normals, NEXRAD2/NEXRAD3 for weather radar); noaa_climate_get_normals serves the current 1991–2020 normals. Determines date range limit: GHCND/PRECIP_*/NORMAL_DLY/NORMAL_HLY/NEXRAD2/NEXRAD3 allow 1-year max per request; GSOM/GSOY/NORMAL_MLY/NORMAL_ANN allow 10-year max.',
     ),
     startDate: isoDateFilter(
-      'Start date for observations (YYYY-MM-DD). For NORMAL_* datasets use 2010-01-01 regardless of the years being analyzed — 2010 is the API proxy year for all normals.',
+      'Start date for observations (YYYY-MM-DD). For NORMAL_* datasets use 2010-01-01 — CDO dates its 1981–2010 normals in the proxy year 2010.',
     ),
     endDate: isoDateFilter(
       'End date for observations (YYYY-MM-DD). Must be within 1 year of startDate for sub-daily/daily/radar datasets (GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3) or within 10 years for monthly/annual datasets (GSOM, GSOY, NORMAL_MLY, NORMAL_ANN) — measured to the end of the calendar month that many years after startDate, so a full calendar year (2024-01-01 to 2024-12-31) always fits. For any NORMAL_* dataset use 2010-12-31.',
@@ -152,7 +271,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       .enum(['standard', 'metric'])
       .optional()
       .describe(
-        'Request metric or standard conversion. Omission preserves datatype-specific raw values: GHCND TMAX/TMIN tenths °C, PRCP tenths mm, SNOW/SNWD whole mm; GSOM/GSOY temperature/precipitation °C/mm; NORMAL_* temperature normals tenths °F and precipitation normals hundredths inches; HPCP/QPCP hundredths inches. Examples are not complete unit metadata. Optional.',
+        'Request metric or standard conversion. Omission preserves datatype-specific raw values: GHCND TMAX/TMIN tenths °C, PRCP tenths mm, SNOW/SNWD whole mm; GSOM/GSOY temperature/precipitation °C/mm; NORMAL_* temperature normals tenths °F and precipitation normals hundredths inches; HPCP/QPCP hundredths inches. Examples are not complete unit metadata. Under metric, CDO converts some NORMAL_* degree days, diurnal ranges, and standard deviations as if they were temperatures, which makes them wrong: -HTDD-NORMAL, -CLDD-NORMAL, -GRDD-TB4886, -GRDD-TB5086, and -DUTR-NORMAL on NORMAL_MLY and NORMAL_ANN; -STDDEV on NORMAL_MLY; -DUTR-NORMAL and -STDDEV on NORMAL_DLY. For those omit units and convert the raw values (whole °F-day degree days ×5/9, tenths-°F ranges and standard deviations ×1/18). Optional.',
       ),
     includemetadata: z
       .boolean()
@@ -270,7 +389,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       .string()
       .optional()
       .describe(
-        'Composed guidance for station ID normalization, page-limit adjustments, raw units, missing precipitation, GHCND quality-check failures, and empty or exhausted pages. Omitted when no guidance applies.',
+        'Composed guidance for station ID normalization, page-limit adjustments, routing from the 1981–2010 NORMAL_* datasets to the 1991–2020 normals, raw units, NORMAL_* values CDO mis-converts under units=metric, NCEI special-value codes on NORMAL_* pages, missing precipitation, GHCND quality-check failures, and empty or exhausted pages. Omitted when no guidance applies.',
       ),
   },
 
@@ -295,7 +414,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'endDate is past the end of the calendar month 1 year after startDate for sub-daily/daily/radar datasets (GHCND, PRECIP_*, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3), or 10 years after it for monthly/annual datasets (GSOM, GSOY, NORMAL_MLY, NORMAL_ANN).',
       recovery:
-        'Use the maxEndDate named in the error, or split into consecutive requests. For NORMAL_* datasets use startDate=2010-01-01 and endDate=2010-12-31.',
+        'Use the maxEndDate named in the error, or split into consecutive requests. For NORMAL_* datasets, the 1981–2010 normals, use startDate=2010-01-01 and endDate=2010-12-31; for 1991–2020 normals use noaa_climate_get_normals.',
     },
     {
       reason: 'upstream_auth_failed',
@@ -382,7 +501,7 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
             maxDays: daysBetween(input.startDate, maxEndDate),
             maxEndDate,
             recovery: {
-              hint: `Set endDate to ${maxEndDate} or earlier, or split the query into consecutive requests. For NORMAL_* datasets use startDate=2010-01-01 and endDate=2010-12-31.`,
+              hint: `Set endDate to ${maxEndDate} or earlier, or split the query into consecutive requests. For NORMAL_* datasets, the 1981–2010 normals, use startDate=2010-01-01 and endDate=2010-12-31; for 1991–2020 normals use noaa_climate_get_normals.`,
             },
           },
         );
@@ -458,7 +577,24 @@ export const noaaClimateFetchData = tool('noaa_climate_fetch_data', {
         ...(flags && { flags }),
       };
     });
+    const isNormals = dataset.startsWith('NORMAL_');
+    if (isNormals)
+      notices.push(
+        'NORMAL_* datasets are the superseded 1981–2010 normals; noaa_climate_get_normals serves the current 1991–2020 normals.',
+      );
     if (input.units === undefined) notices.push(rawUnitsNotice(input.datasetId));
+    const offsetEndings = input.units === 'metric' ? METRIC_OFFSET_ENDINGS.get(dataset) : undefined;
+    const offsetConverted = offsetEndings
+      ? [...new Set(results.map((rec) => rec.datatype))].filter((datatype) =>
+          offsetEndings.some((ending) => datatype.endsWith(ending)),
+        )
+      : [];
+    if (offsetConverted.length)
+      notices.push(
+        `CDO mis-converts ${offsetConverted.join(', ')} on this page under units=metric: it subtracts 32 before scaling, as for a temperature, though degree days, temperature ranges, and standard deviations only scale. Values are kept as CDO returned them. Re-request with units omitted and convert the raw values: degree days are whole °F-days (multiply by 5/9 for °C-days); diurnal ranges and standard deviations are tenths °F (multiply by 1/18 for °C).`,
+      );
+    const specialNotice = isNormals ? specialValuesNotice(results, input.units) : undefined;
+    if (specialNotice) notices.push(specialNotice);
     if (missingCount)
       notices.push(
         `${missingCount} missing precipitation observation(s) on this page; value is omitted and missing=true.`,

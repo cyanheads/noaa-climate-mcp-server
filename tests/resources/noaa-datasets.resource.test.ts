@@ -99,4 +99,9 @@ describe('noaaDatasetsResource', () => {
     expect(datasets[0]!.mindate).toBe('1763-01-01');
     expect(datasets[0]!.maxdate).toBe('2024-12-31');
   });
+
+  it('describes NORMAL_* as the superseded 1981–2010 normals and names noaa_climate_get_normals', () => {
+    expect(noaaDatasetsResource.description).toContain('superseded 1981–2010 normals');
+    expect(noaaDatasetsResource.description).toContain('noaa_climate_get_normals');
+  });
 });

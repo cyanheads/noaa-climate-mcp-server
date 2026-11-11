@@ -300,4 +300,9 @@ describe('noaaClimateListDatasets', () => {
     });
     expect(firstText(blocks)).toContain('No records on this page.');
   });
+
+  it('describes NORMAL_* as the superseded 1981–2010 normals and names noaa_climate_get_normals', () => {
+    expect(noaaClimateListDatasets.description).toContain('superseded 1981–2010 normals');
+    expect(noaaClimateListDatasets.description).toContain('noaa_climate_get_normals');
+  });
 });
