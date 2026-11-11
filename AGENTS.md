@@ -2,8 +2,8 @@
 
 **Server:** noaa-climate-mcp-server
 **Version:** 0.8.0
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.18`
-**Engines:** Bun ≥1.4.0, Node ≥24.0.0
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.22`
+**Engines:** Bun ≥1.4.4, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.4.0
 **Zod:** ^4.6.7
 
@@ -13,7 +13,7 @@
 
 ## Domain
 
-NOAA Climate Data Online (CDO) API v2 — historical weather data — plus two separate NCEI bulk-CSV corpora: the Storm Events Database and Billion-Dollar Weather and Climate Disasters. 10 tools, 2 data resources, and 1 published agent skill:
+NOAA Climate Data Online (CDO) API v2 — historical weather data — plus three separate NCEI sources: the 1991–2020 U.S. Climate Normals (Access Data Service) and two bulk-CSV corpora, the Storm Events Database and Billion-Dollar Weather and Climate Disasters. 11 tools, 2 data resources, and 1 published agent skill:
 
 - `noaa_climate_list_datasets` — list available CDO datasets
 - `noaa_climate_list_data_categories` — list measurement category groups
@@ -23,17 +23,19 @@ NOAA Climate Data Online (CDO) API v2 — historical weather data — plus two s
 - `noaa_climate_find_stations` — search weather stations by location, bounding box, dataset
 - `noaa_climate_get_station` — fetch full metadata for a single station
 - `noaa_climate_fetch_data` — fetch historical observations with date range validation and unit selection
-- `noaa_climate_search_storm_events` — search NCEI Storm Events for one year (severe-weather events, damage, casualties, narratives)
+- `noaa_climate_get_normals` — read one station's 1991–2020 U.S. Climate Normals (monthly, daily, hourly, annual/seasonal) in NCEI's native units, with completeness flags; CDO's `NORMAL_*` datasets are the superseded 1981–2010 normals
+- `noaa_climate_search_storm_events` — search NCEI Storm Events for one year (severe-weather events, damage, casualties, narratives; county rows carry `cdoLocationId`, and `countyFips` selects one county)
 - `noaa_climate_get_billion_dollar_disasters` — query NCEI’s retired 1980–2024 Billion-Dollar Weather and Climate Disasters archive, per disaster or per year. Every successful response carries a retirement notice composed with paging guidance. CPI adjustments stay as archived, without current-price rebasing or an inferred base year; `coveredYears` stays row-derived. State shape is advertised as `^\s*[A-Za-z]{2}\s*$`; well-formed unavailable codes remain `unknown_state`.
 - `noaa://datasets` resource — all CDO datasets as injectable context
 - `noaa://stations/{stationId}` resource — station metadata by ID
 
-CDO station inputs share `stationIdFilter` / `stationIdArrayFilter` and `normalizeStationId` in `shared/validation.ts`: trim, uppercase, and prefix bare 11-character GHCN aliases; generic IDs remain opaque. Successful tools compose normalization notices; the station resource keeps its existing result shape. `/data` alone checks the actual encoded query against 4000 characters before retry/fetch. Fetch-data keeps raw CDO types distinct from its output: documented PRECIP_HLY/HPCP and PRECIP_15/QPCP missing sentinels omit `value` and set `missing: true`; only GHCND attributes gain decoded `flags`. Missing/QC counts are page-local, and raw-unit guidance is datatype-qualified. All notices compose with clamp and paging guidance.
+CDO station inputs share `stationIdFilter` / `stationIdArrayFilter` and `normalizeStationId` in `shared/validation.ts`: trim, uppercase, and prefix bare 11-character GHCN aliases; generic IDs remain opaque. `noaa_climate_get_normals` is the exception: `ghcnStationIdFilter` / `normalizeGhcnStationId` accept only a GHCN-Daily ID and send the bare form, uppercasing only an ID written all in lowercase because NCEI matches case-sensitively. Successful tools compose normalization notices; the station resource keeps its existing result shape. `/data` alone checks the actual encoded query against 4000 characters before retry/fetch. Fetch-data keeps raw CDO types distinct from its output: documented PRECIP_HLY/HPCP and PRECIP_15/QPCP missing sentinels omit `value` and set `missing: true`; only GHCND attributes gain decoded `flags`. Missing/QC counts are page-local, and raw-unit guidance is datatype-qualified. All notices compose with clamp and paging guidance.
 
 **Services:**
 
 - `src/services/cdo/cdo-service.ts` — HTTP client with retry/backoff, `NOAA_CDO_TOKEN` header auth.
-- `src/services/storm-events/storm-events-service.ts` — NCEI bulk CSV. No token, no JSON envelope, no `resolveCollectionTotal()`. Resolves each year's `_c<publishDate>`-suffixed filename from the live directory index (it is not constructible), decompresses explicitly (the files carry no `Content-Encoding`), and streams a year through the shared CSV reader so the decompressed ~70 MB is never held. Caches the listing and two years of compressed bytes for six hours. Damage parsing lives in `damage.ts` — an empty cell is "not reported", never `0`.
+- `src/services/storm-events/storm-events-service.ts` — NCEI bulk CSV. No token, no JSON envelope, no `resolveCollectionTotal()`. Resolves each year's `_c<publishDate>`-suffixed filename from the live directory index (it is not constructible), decompresses explicitly (the files carry no `Content-Encoding`), and streams a year through the shared CSV reader so the decompressed ~70 MB is never held. Caches the listing and two years of compressed bytes for six hours. Damage parsing lives in `damage.ts` — an empty cell is "not reported", never `0`. `countyCodes()` pads `STATE_FIPS`/`CZ_FIPS` and composes `cdoLocationId` only for `C` rows with a state code in 01–56 other than Alaska's 02; the projection and the `countyFips` filter both read it.
+- `src/services/normals/normals-service.ts` — NCEI Access Data Service (`/access/services/data/v1`) for 1991–2020 normals. No token. One dataset per granularity, every datatype named explicitly (the service's own monthly default omits `MLY-TAVG-NORMAL`), `units` never sent, rows of left-padded strings parsed into one record per datatype, a bounded timeout and a total deadline around `withRetry`. A datatype outside the verified `UNITS` table gets no `unit`.
 - `src/services/billion-dollar-disasters/billion-dollar-disasters-service.ts` — NCEI Billion-Dollar Disasters. No token, four small static CSVs (per-event and per-year, national and per-state), each opening with preamble lines ahead of the header. **Each file declares its own cost unit and they differ** — millions for per-event, billions for the national per-year, millions again for a per-state per-year — so the unit is parsed from the file's preamble and applied at one site, `toUsd()`, converting everything to whole US dollars. An unrecognized or absent unit is `malformed_export`, never a guess.
 - `src/services/csv/csv-stream-reader.ts` — the RFC 4180 reader both bulk-CSV services parse with.
 
@@ -169,11 +171,12 @@ src/
   services/
     cdo/                                # CDO API client, pagination, raw types
     csv/                                # Shared streaming RFC 4180 reader
+    normals/                            # 1991–2020 normals: Access Data Service client, unit labels
     storm-events/                       # Storm Events listing, download, parsing
     billion-dollar-disasters/           # Disaster exports, unit normalization
   mcp-server/
     tools/definitions/
-      noaa-climate-*.tool.ts            # 10 tool definitions
+      noaa-climate-*.tool.ts            # 11 tool definitions
       shared/                           # Shared validation and upstream routing
     resources/definitions/
       noaa-datasets.resource.ts         # Dataset catalog resource
@@ -278,7 +281,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Bundling
 
-`npm run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. `mcpb pack` reads `.mcpbignore`, not `.gitignore`, so every root path the bundle must not ship — source, tests, docs, caches, logs, agent docs, plugin manifests, gitignored local files — needs a root-anchored line there (`/docs/`, never `docs/`, which also strips `node_modules/*/docs/`); `lint:packaging` names each missing or unanchored line. Root `skills/` ships on purpose. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips four classes of `node_modules/**` content that root-anchored `.mcpbignore` patterns cannot reach: dependency-shipped agent docs (`framework-skills/`, `skills/`, `.claude/`, `.agents/`, `SKILL.md`); platform-specific native bindings, which would otherwise lock the bundle to the platform it was packed on; node-gyp build output beside a `binding.gyp` (`config.gypi`, Makefiles, `obj.target/`, `.deps/`, object files and debug symbols), which records the packing machine's paths — compiled `*.node` addons stay; and build-only package files — the framework's `changelog/`, `scripts/`, `templates/`, `CLAUDE.md`, `AGENTS.md`, and config bases (`biome.json`, `vitest.config.base.mjs`, `config/tsconfig.base.json`), and `better-sqlite3`'s `deps/` and `src/` C sources. A server using DataCanvas therefore ships a portable bundle without the DuckDB native — `@duckdb/node-api` is an optional peer loaded lazily, so canvas tools report an actionable install hint and every other tool works normally. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
+`npm run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. `mcpb pack` reads `.mcpbignore`, not `.gitignore`, so every root path the bundle must not ship — source, tests, docs, caches, logs, agent docs, plugin manifests, gitignored local files — needs a root-anchored line there (`/docs/`, never `docs/`, which also strips `node_modules/*/docs/`); `lint:packaging` names each missing or unanchored line. Root `skills/` ships on purpose. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips four classes of `node_modules/**` content that root-anchored `.mcpbignore` patterns cannot reach: dependency-shipped agent docs — `framework-skills/`, `skills/`, `.claude/`, `.agents/`, `AGENTS.md`, and `CLAUDE.md` at a package's root, and `SKILL.md` anywhere (a `skills/` deeper in a package is runtime code and stays); platform-specific native bindings, which would otherwise lock the bundle to the platform it was packed on; node-gyp build output beside a `binding.gyp` (`config.gypi`, Makefiles, `obj.target/`, `.deps/`, object files and debug symbols), which records the packing machine's paths — compiled `*.node` addons stay; and build-only package files — the framework's `changelog/`, `scripts/`, `templates/`, and config bases (`biome.json`, `vitest.config.base.mjs`, `config/tsconfig.base.json`), and `better-sqlite3`'s `deps/` and `src/` C sources. A server using DataCanvas therefore ships a portable bundle without the DuckDB native — `@duckdb/node-api` is an optional peer loaded lazily, so canvas tools report an actionable install hint and every other tool works normally. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
 
 **Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match, that every `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.X}"` (the host substitutes nothing else — `"${X}"` reaches the server as that literal string), and that an optional string option carries `"default": ""`.
 

@@ -1,7 +1,7 @@
 <div align="center">
   <h1>@cyanheads/noaa-climate-mcp-server</h1>
   <p><b>Search NOAA climate stations and datasets, fetch historical weather observations via MCP. STDIO or Streamable HTTP.</b>
-  <div>10 Tools • 2 Data Resources • 1 Skill</div>
+  <div>11 Tools • 2 Data Resources • 1 Skill</div>
   </p>
 </div>
 
@@ -29,7 +29,7 @@
 
 ## Overview
 
-Historical weather and climate records from NOAA: station observations from Climate Data Online, the Storm Events Database, and Billion-Dollar Weather and Climate Disasters. Find stations, pull observations in the units you want, and look up storm damage or disaster costs.
+Historical weather and climate records from NOAA: station observations from Climate Data Online, 1991–2020 U.S. Climate Normals, the Storm Events Database, and Billion-Dollar Weather and Climate Disasters. Find stations, pull observations in the units you want, read a station's current normals, and look up storm damage or disaster costs.
 
 ### Tools
 
@@ -43,7 +43,8 @@ Historical weather and climate records from NOAA: station observations from Clim
 | `noaa_climate_find_stations` | Search weather stations by location, bounding box, dataset, and data type |
 | `noaa_climate_get_station` | Fetch full metadata for a single station by ID |
 | `noaa_climate_fetch_data` | Fetch historical observation records for a dataset and date range |
-| `noaa_climate_search_storm_events` | Search the NCEI Storm Events Database for one year — tornadoes, hail, floods, hurricanes, with damage, casualties, and narratives |
+| `noaa_climate_get_normals` | Read one station's 1991–2020 U.S. Climate Normals — monthly, daily, hourly, or annual/seasonal — with completeness flags |
+| `noaa_climate_search_storm_events` | Search the NCEI Storm Events Database for one year — tornadoes, hail, floods, hurricanes, with damage, casualties, narratives, and the county's CDO location ID |
 | `noaa_climate_get_billion_dollar_disasters` | Query NOAA's retired 1980–2024 Billion-Dollar Weather and Climate Disasters archive — CPI-adjusted costs and deaths per disaster, or per-year totals by disaster class |
 
 ### Resources
@@ -59,12 +60,14 @@ Historical weather and climate records from NOAA: station observations from Clim
 
 ## Capability reference
 
-Every `stationId` input, including the station resource, trims surrounding whitespace and uppercases IDs. Bare 11-character GHCN IDs (`USW00024233`) become `GHCND:USW00024233`. Namespaced IDs such as `COOP:454769`, `NEXRAD:KATX`, and unfamiliar nonempty namespace/payload pairs remain accepted; ambiguous bare IDs are rejected. Tools disclose changes in a notice; the resource returns the canonical station ID. Syntax does not establish that a station exists.
+Every CDO `stationId` input, including the station resource, trims surrounding whitespace and uppercases IDs. Bare 11-character GHCN IDs (`USW00024233`) become `GHCND:USW00024233`. Namespaced IDs such as `COOP:454769`, `NEXRAD:KATX`, and unfamiliar nonempty namespace/payload pairs remain accepted; ambiguous bare IDs are rejected. Tools disclose changes in a notice; the resource returns the canonical station ID. Syntax does not establish that a station exists.
+
+`noaa_climate_get_normals` takes a GHCN-Daily ID only, bare or with a `GHCND:` prefix, and sends the bare form: NCEI matches IDs case-sensitively, so an ID written entirely in lowercase is uppercased and a mixed-case legacy ID such as `US10adam002` goes as written. Other namespaces such as `COOP:454769` are rejected rather than returning an empty result.
 
 ### `noaa_climate_list_datasets` <sub>tool</sub>
 
 - No required inputs; optional data type, location, station, and date-range filters; `limit` 1–1000 (default 25) with `offset`, sortable by `id`, `name`, `mindate`, `maxdate`, or `datacoverage`
-- Returns each dataset's ID, name, and date span — GHCND (daily, 1763–present), GSOM (monthly), GSOY (annual), NORMAL_DLY/MLY/ANN/HLY (1981–2010 normals)
+- Returns each dataset's ID, name, and date span — GHCND (daily, 1763–present), GSOM (monthly), GSOY (annual), NORMAL_DLY/MLY/ANN/HLY (the superseded 1981–2010 normals; `noaa_climate_get_normals` serves 1991–2020)
 - Date filters use inclusive coverage overlap: `maxdate >= startDate` and `mindate <= endDate` for each supplied bound. The complete catalog matching the other filters is retrieved before filtering and pagination; totals describe that filtered view.
 
 ---
@@ -115,17 +118,33 @@ Every `stationId` input, including the station resource, trims surrounding white
 
 ### `noaa_climate_fetch_data` <sub>tool</sub>
 
-- Requires `datasetId`, `startDate`, `endDate`; optional `stationId`, `locationId`, `datatypeId` arrays. The span cap is 1 year for GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3 and 10 years for GSOM, GSOY, NORMAL_MLY, NORMAL_ANN; any `NORMAL_*` dataset takes `startDate=2010-01-01` / `endDate=2010-12-31`
+- Requires `datasetId`, `startDate`, `endDate`; optional `stationId`, `locationId`, `datatypeId` arrays. The span cap is 1 year for GHCND, PRECIP_15, PRECIP_HLY, NORMAL_DLY, NORMAL_HLY, NEXRAD2, NEXRAD3 and 10 years for GSOM, GSOY, NORMAL_MLY, NORMAL_ANN; any `NORMAL_*` dataset takes `startDate=2010-01-01` / `endDate=2010-12-31`. The `NORMAL_*` datasets are the superseded 1981–2010 normals; read 1991–2020 with `noaa_climate_get_normals`, and a notice on `NORMAL_*` pages says so.
 - Returns flat observation records plus an `effectiveQuery` echo; `date_range_exceeded` names the latest `maxEndDate` CDO will accept. The encoded query ceiling is 4000 characters; longer queries fail as `validation_error` before any request. Reduce `stationId`, `locationId`, and `datatypeId` filters and make separate calls. Filters are never discarded or automatically split.
-- Request `units: "metric"` or `"standard"`. Omission preserves NOAA's raw values and adds dataset-specific guidance, including on empty pages. Examples: GHCND `TMAX`/`TMIN` use tenths °C, `PRCP` tenths mm, and `SNOW`/`SNWD` whole mm; GSOM/GSOY temperature and precipitation use °C/mm; NORMAL_* temperature normals use tenths °F and precipitation normals hundredths inches; PRECIP_HLY `HPCP` and PRECIP_15 `QPCP` use hundredths inches. Units and scale depend on datatype; these examples do not describe wind, direction, counts, percentages, or every snow datatype. See [NOAA's dataset documentation](https://www.ncei.noaa.gov/pub/data/cdo/documentation/).
+- Request `units: "metric"` or `"standard"`. Omission preserves NOAA's raw values and adds dataset-specific guidance, including on empty pages. Examples: GHCND `TMAX`/`TMIN` use tenths °C, `PRCP` tenths mm, and `SNOW`/`SNWD` whole mm; GSOM/GSOY temperature and precipitation use °C/mm; NORMAL_* temperature normals use tenths °F, degree days whole °F-days, and precipitation normals hundredths inches; PRECIP_HLY `HPCP` and PRECIP_15 `QPCP` use hundredths inches. Units and scale depend on datatype; these examples do not describe wind, direction, counts, percentages, or every snow datatype. See [NOAA's dataset documentation](https://www.ncei.noaa.gov/pub/data/cdo/documentation/).
+- Under `units=metric`, CDO converts some `NORMAL_*` degree days, diurnal temperature ranges, and standard deviations as if they were temperatures, so the numbers are wrong: `-HTDD-NORMAL`, `-CLDD-NORMAL`, `-GRDD-TB4886`, `-GRDD-TB5086`, and `-DUTR-NORMAL` on NORMAL_MLY and NORMAL_ANN; `-STDDEV` on NORMAL_MLY; `-DUTR-NORMAL` and `-STDDEV` on NORMAL_DLY. Values are kept as CDO returned them and a notice names the affected datatypes. To recover them, omit `units` and convert the raw values: degree days are whole °F-days (×5/9 for °C-days), and ranges and standard deviations are tenths °F (×1/18 for °C). `units=standard` is no substitute, since it leaves the seasonal ranges unscaled.
+- `NORMAL_*` pages can carry NCEI special-value codes: `-9999` missing or insufficient data, `-7777` a non-zero value that would round to zero, `-6666` parameter undefined, `-4444` year-round frost-freeze risk. They are not measurements and are kept as CDO returned them, with a notice naming the datatypes that carry them.
 - PRECIP_HLY `HPCP` and PRECIP_15 `QPCP` missing sentinels become `missing: true` with `value` omitted: `99999` without units, `999.99` standard, or `25399.75` metric. Rows, raw `attributes`, order, totals, and offsets remain intact. Zero, trace, and accumulation-end measurements remain values; flags alone do not mark a row missing. A notice counts missing observations on this page.
 - GHCND `attributes` remain raw and are also decoded as `flags: { measurement, quality, source, observationTime }`. Explicit blank slots and leading-zero times are preserved; absent trailing positions remain omitted. A nonblank `quality` means the observation failed a quality check. A notice counts those rows on this page; numeric values remain available for callers to decide how to aggregate them. Other datasets retain their raw attributes without GHCND decoding. See [GHCND's flag layout](https://www.ncei.noaa.gov/pub/data/cdo/documentation/GHCND_documentation.pdf).
 
 ---
 
+### `noaa_climate_get_normals` <sub>tool</sub>
+
+- No token required; reads NCEI's Access Data Service, not CDO. Takes one GHCN-Daily `stationId` per call (`USW00024233`), a `granularity` (`monthly`, `daily`, `hourly`, or `annualseasonal`), optional `datatypeId` (1–50 IDs held to the granularity's prefix), `month` (1–12), `limit` 1–1000 (default 100), and `offset`
+- Returns NOAA's current 1991–2020 U.S. Climate Normals as flat records, one datatype on one row, with an `effectiveQuery` echo. `date` is NCEI's row key with no year (`"01"`, `"01-31"`, `"01-01T00:00:00"` in local standard time) and is absent for `annualseasonal`. Defaults: monthly and annual/seasonal read average, maximum, and minimum temperature, precipitation, and snowfall (`MLY-TAVG-NORMAL`, `ANN-PRCP-NORMAL`, and so on); daily reads `DLY-TAVG-NORMAL`, `DLY-TMAX-NORMAL`, `DLY-TMIN-NORMAL`; hourly reads `HLY-TEMP-NORMAL` and `HLY-DEWP-NORMAL`. NCEI's documentation for each product lists the other datatypes: degree days, standard deviations, percentiles, frost dates.
+- `hourly` requires `month`, since a full year is 8,760 rows per datatype; `annualseasonal` rejects it, and its seasons are the `DJF-`, `MAM-`, `JJA-`, and `SON-` datatype prefixes. `daily` with a `month` narrows to that month and February includes `02-29`.
+- Values stay in NCEI's native units and are never converted: the tool does not send `units`, because the service's conversion is wrong for some datatypes. `unit` is labeled for temperature and dew point (`°F`), precipitation and snowfall (`in`), base-65 heating and cooling degree days (`°F-days` on the monthly, daily, seasonal, and annual `-HTDD-NORMAL` and `-CLDD-NORMAL`), and hourly sea-level pressure (`hPa` on `HLY-PRES-NORMAL`, `HLY-PRES-10PCTL`, and `HLY-PRES-90PCTL`; NCEI's documentation says inches of mercury, but the values are hPa); any other datatype has none, degree days at other bases included, and a notice links NCEI's documentation.
+- Each record carries NCEI's `completeness` flag and `years` of data: `S` is a standard normal, while `R`, `P`, and `E` are built from fewer years or estimated from nearby stations. A notice counts the non-standard records on the page. NCEI's `-9999` special value becomes `missing: true` with `value` omitted, and its `measurementFlag` is relayed.
+- About 15,600 stations carry monthly, daily, and annual/seasonal normals and about 470 carry hourly; precipitation-only stations carry no temperature normals. NCEI answers an unknown station and a station without normals alike, so both return a successful empty result whose notice points to `noaa_climate_get_station` and `noaa_climate_find_stations`. When the ID was written with a lowercase letter, the notice also names its case as a cause: NCEI matches IDs case-sensitively, the ID should be passed exactly as `noaa_climate_find_stations` lists it, and `noaa_climate_get_station` cannot resolve the mixed-case legacy CoCoRaHS IDs (about 290 stations with normals). A requested datatype no row carries is named in the notice while the rest return.
+- Fails as `validation_error` (a datatype outside the granularity's prefixes, `month` missing for `hourly` or given for `annualseasonal`, or a parameter NCEI rejected), `service_unavailable` (unreachable, a server error other than 504, or a body that is not JSON rows), or `rate_limited`. A 504 and a request that times out, its 45-second deadline included, fail with the `Timeout` code and no declared reason, as on the CDO tools.
+
+---
+
 ### `noaa_climate_search_storm_events` <sub>tool</sub>
 
-- No token required; `year` selects one export (1950 through the current partial year); filter by `episodeId` (exact digit string from a returned event; whitespace is trimmed, blank means unset, leading zeros remain significant), `state` (the full NCEI name, e.g. `"FLORIDA"`), `eventType`, `month`, `startDate`/`endDate`, and `minDamageInUsd`; page ceiling 100 (default 50) with `offset`
+- No token required; `year` selects one export (1950 through the current partial year); filter by `episodeId` (exact digit string from a returned event; whitespace is trimmed, blank means unset, leading zeros remain significant), `state` (the full NCEI name, e.g. `"FLORIDA"`), `countyFips` (five digits, optionally behind `FIPS:`, e.g. `"53043"`), `eventType`, `month`, `startDate`/`endDate`, and `minDamageInUsd`; page ceiling 100 (default 10) with `offset`
+- Events carry `stateFips` and `czFips` (NCEI's codes, zero-padded to two and three digits), `wfo` (the NWS forecast office), `beginLocation` (the place NWS measures the start from, not the start point), and `endLatitude`/`endLongitude` (a tornado's track end), each omitted when NCEI left the cell blank. `cdoLocationId` (`FIPS:53043` for Lincoln County, WA) is the `locationId` that `noaa_climate_find_stations` and `noaa_climate_fetch_data` take. It appears only on county rows (`countyOrZoneType` `C`) in DC and every state but Alaska, whose county rows carry NWS zone numbers; zone and marine rows and the territories (NCEI writes them as `96`–`99`) have none.
+- `countyFips` selects exactly the events whose `cdoLocationId` it names, ANDed with the other filters and applied before damage accounting, totals, and paging. A county whose events were filed under forecast zones returns nothing, and the zero-match notice says so. CDO's county catalog can lag Census changes: the export writes Oglala Lakota County, SD as 46102 while CDO still lists it under its former name, Shannon County (46113), so when CDO returns no stations for a `cdoLocationId`, search stations by `extent` around the event coordinates.
 - Optional `startDate`/`endDate` are real `YYYY-MM-DD` dates and match inclusive event-span overlap before damage accounting, totals, and pagination. One-sided, equal, and cross-year intervals work; only `year` selects the export. Active date bounds exclude missing, invalid, or reversed source spans; without bounds those rows remain visible. `appliedDateRange` echoes supplied bounds on both surfaces. Reversed request dates fail as `invalid_date_range` before downloading.
 - Each distinct episode narrative appears once in `episodeNarratives`, linked from events by `episodeNarrativeRef`; individual `eventNarrative` text stays on each event. Rendered narratives preserve literal punctuation and line breaks. Optional local ISO `beginDate`/`endDate` values can feed CDO date filters alongside the unchanged NCEI date-time and timezone fields.
 - Damage arrives as the raw magnitude-suffixed string (`"1.20M"`) and a parsed dollar amount, omitted rather than zeroed when NCEI reported none; a zero-match response names the event types and states the year contains
@@ -160,7 +179,7 @@ Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): s
 
 NOAA-specific:
 
-- Full CDO API v2 coverage — datasets, data categories, data types, locations, stations, and observations — plus two separate NCEI bulk-CSV corpora requiring no token: severe-weather events (Storm Events Database) and billion-dollar disaster costs
+- Full CDO API v2 coverage — datasets, data categories, data types, locations, stations, and observations — plus three separate NCEI sources requiring no token: 1991–2020 climate normals (Access Data Service), and two bulk-CSV corpora, severe-weather events (Storm Events Database) and billion-dollar disaster costs
 - Client-side date-range validation enforced per dataset before hitting the API, reporting the exact upstream limit back to the caller
 - Discovery date intervals reject `startDate > endDate` before any request, with `validation_error` and a hint to swap the values. Equal and single-ended dates remain valid; compact `YYYYMMDD`, unpadded dashed dates, and supported second-precision datetime forms are normalized for comparison.
 - Unit conversion via CDO's `units` parameter, with datatype-qualified guidance when raw values are requested
@@ -170,7 +189,7 @@ NOAA-specific:
 Agent-friendly output:
 
 - Paginated results across every list and search tool — zero-based `offset` in inputs and returned metadata. Locally filtered dataset and location views synthesize metadata from the filtered results; other CDO pages preserve absent upstream metadata. Coordinates and coverage retain upstream precision; coverage text uses raw fractions labeled 0–1.
-- Positive integer read limits are clamped to the page ceiling: 1000 for CDO, 100 for Storm Events and Billion-Dollar Disasters. A notice names the requested and applied limits alongside any empty-page or exhaustion guidance; use the applied limit to advance `offset`. Each clamp is logged and counted as `noaa.pagination.limit_clamped`.
+- Positive integer read limits are clamped to the page ceiling: 1000 for CDO and climate normals, 100 for Storm Events and Billion-Dollar Disasters. A notice names the requested and applied limits alongside any empty-page or exhaustion guidance; use the applied limit to advance `offset`. Each clamp is logged and counted as `noaa.pagination.limit_clamped`.
 - Station, location, and dataset IDs flow naturally between tools — find a location, find stations in it, fetch data from those stations
 - Structured error contracts with typed `reason` codes and recovery hints — agents branch on data, not string parsing
 - Damage and cost fields are honest about upstream gaps — an unreported NCEI figure is omitted rather than reported as a confirmed zero
@@ -203,7 +222,7 @@ For other clients, add this to the MCP config file:
 }
 ```
 
-Get a free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) for CDO requests; Storm Events and Billion-Dollar Disasters need no token. For Docker or a source build, see [Running the server](#running-the-server).
+Get a free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) for CDO requests; climate normals, Storm Events, and Billion-Dollar Disasters need no token. For Docker or a source build, see [Running the server](#running-the-server).
 
 ## Configuration
 
@@ -211,7 +230,7 @@ Server-specific configuration uses Zod schemas in `src/config/server-config.ts`.
 
 | Variable | Description | Default |
 |:---|:---|:---|
-| `NOAA_CDO_TOKEN` | **Required for CDO.** Obtain free at [ncdc.noaa.gov/cdo-web/token](https://www.ncdc.noaa.gov/cdo-web/token); the two bulk corpora need no token | — |
+| `NOAA_CDO_TOKEN` | **Required for CDO.** Obtain free at [ncdc.noaa.gov/cdo-web/token](https://www.ncdc.noaa.gov/cdo-web/token); climate normals, Storm Events, and Billion-Dollar Disasters need no token | — |
 | `NOAA_CLAMP_LIMITS` | `true` clamps positive integer read limits to the page ceiling; `false` restores schema rejection above it. Only the exact strings `true` and `false` are accepted; other nonempty values fail startup. Restart after changing this setting. | `true` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http` | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port | `3010` |
@@ -232,8 +251,8 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Prerequisites
 
-- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js ≥24.0.0).
-- A free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) for CDO requests; the two bulk corpora need no token.
+- [Bun v1.4.4](https://bun.sh/) or higher (or Node.js ≥24.0.0).
+- A free [NOAA CDO API token](https://www.ncdc.noaa.gov/cdo-web/token) for CDO requests; climate normals, Storm Events, and Billion-Dollar Disasters need no token.
 
 ### Source installation
 
@@ -279,9 +298,10 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 
 | Directory | Purpose |
 |:---|:---|
-| `src/mcp-server/tools` | Tool definitions (`*.tool.ts`). Ten tools across datasets, locations, stations, observations, storm events, and disaster costs. |
+| `src/mcp-server/tools` | Tool definitions (`*.tool.ts`). Eleven tools across datasets, locations, stations, observations, climate normals, storm events, and disaster costs. |
 | `src/mcp-server/resources` | Resource definitions. Datasets catalog and station metadata resources. |
 | `src/services/cdo` | CDO HTTP client with retry, backoff, camelCase→lowercase parameter translation, and recovery of CDO's own rejection message. |
+| `src/services/normals` | NCEI Access Data Service client for 1991–2020 climate normals — per-granularity datasets, padded-string parsing, native-unit labels. |
 | `src/services/csv` | Incremental RFC 4180 CSV reader shared by the two NCEI bulk-CSV corpora. |
 | `src/services/storm-events` | NCEI Storm Events bulk-CSV client — filename discovery, streamed decompression, damage parsing. |
 | `src/services/billion-dollar-disasters` | NCEI Billion-Dollar Disasters client — declared-unit resolution and conversion to whole US dollars. |
